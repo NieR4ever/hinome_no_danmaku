@@ -183,6 +183,7 @@
     const show = locked || settings.uiVisibility === 'always' || panelOpen || nearUI;
     uiRoot.style.opacity = show ? '1' : '0';
     uiRoot.style.pointerEvents = show ? 'auto' : 'none';
+    fitPanel();
     if (visibilitySelect) {
       visibilitySelect.disabled = locked;
       visibilitySelect.value = locked ? 'always' : settings.uiVisibility;
@@ -437,9 +438,20 @@
     settingsPanel.appendChild(row);
   }
 
+  // 限制面板高度，使其不超出播放器（或视口）下沿，超出部分在面板内滚动
+  function fitPanel() {
+    if (!panelOpen) return;
+    const host = uiRoot.parentElement;
+    const inPlayer = host && placedKey.startsWith('player');
+    const limit = inPlayer ? host.getBoundingClientRect().bottom : window.innerHeight;
+    const top = settingsPanel.getBoundingClientRect().top;
+    settingsPanel.style.maxHeight = `${Math.max(120, Math.min(limit, window.innerHeight) - top - 8)}px`;
+  }
+
   function openPanel() {
     panelOpen = true;
     settingsPanel.style.display = 'grid';
+    fitPanel();
     refreshVisibility();
   }
 
@@ -587,6 +599,7 @@
       e.stopPropagation();
       settingsPanel.scrollTop += e.deltaY;
     }, { passive: false });
+    window.addEventListener('resize', fitPanel);
     document.addEventListener('mousedown', (e) => {
       if (panelOpen && !uiRoot.contains(e.target)) closePanel();
     }, true);

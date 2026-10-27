@@ -148,9 +148,7 @@
       key = `player:${pos}`;
       apply = () => {
         uiRoot.style.cssText = `position:absolute;z-index:80;${PLAYER_POS_CSS[pos]}`;
-        panelAlign(pos === 'top' || pos.startsWith('mid-')
-          ? 'center'
-          : pos.endsWith('left') ? 'left' : 'right');
+        panelAlign(pos.endsWith('right') ? 'right' : 'left');
       };
       if (uiRoot.parentElement !== player) {
         if (getComputedStyle(player).position === 'static') player.style.position = 'relative';

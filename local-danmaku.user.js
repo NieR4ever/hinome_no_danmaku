@@ -25,7 +25,25 @@
     blockTop: false,
     blockBottom: false,
     blockColorful: false,
+    uiVisibility: 'always', // always | hover
+    uiPosition: 'top-right', // top | top-left | top-right | mid-left | mid-right | list
   };
+
+  const UI_PREFS_KEY = 'local-danmaku-ui';
+  const PANEL_DELAY = 400; // 悬停后展开面板的延迟(ms)
+  try {
+    const saved = JSON.parse(localStorage.getItem(UI_PREFS_KEY) || '{}');
+    if (['always', 'hover'].includes(saved.uiVisibility)) settings.uiVisibility = saved.uiVisibility;
+    if (typeof saved.uiPosition === 'string') settings.uiPosition = saved.uiPosition;
+  } catch (e) { /* 忽略损坏的配置 */ }
+  function saveUiPrefs() {
+    try {
+      localStorage.setItem(UI_PREFS_KEY, JSON.stringify({
+        uiVisibility: settings.uiVisibility,
+        uiPosition: settings.uiPosition,
+      }));
+    } catch (e) { /* 忽略存储失败 */ }
+  }
 
   let danmakus = []; // {t, mode, size, color, text}
   let layer = null;
@@ -82,6 +100,27 @@
     return document.querySelector('.bpx-player-video-wrap video, #bilibiliPlayer video, video');
   }
 
+  // 找到侧栏里“弹幕列表”文字所在的元素
+  function findListTitle() {
+    const scope = document.querySelector('#danmukuBox, .danmaku-wrap, .bui-collapse-header');
+    const root = scope ? (scope.closest('#danmukuBox, .danmaku-wrap') || scope) : null;
+    if (!root) return null;
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    while (walker.nextNode()) {
+      const n = walker.currentNode;
+      if (n.nodeValue.trim() === '弹幕列表' && !uiRoot.contains(n)) return n.parentElement;
+    }
+    return null;
+  }
+
+  const PLAYER_POS_CSS = {
+    top: 'top:10px;left:50%;transform:translateX(-50%);',
+    'top-left': 'top:10px;left:10px;',
+    'top-right': 'top:10px;right:10px;',
+    'mid-left': 'top:50%;left:10px;transform:translateY(-50%);',
+    'mid-right': 'top:50%;right:10px;transform:translateY(-50%);',
+  };
+
   function positionUI() {
     if (!uiRoot) return;
 
@@ -89,29 +128,73 @@
     const player = video
       ? video.closest('.bpx-player-container, #bilibiliPlayer, .bpx-player-video-area')
       : document.querySelector('.bpx-player-container, #bilibiliPlayer');
-    if (player) {
-      if (getComputedStyle(player).position === 'static') player.style.position = 'relative';
-      uiRoot.style.cssText =
-        'position:absolute;top:10px;right:10px;z-index:80;pointer-events:auto;';
-      if (uiRoot.parentElement !== player) player.appendChild(uiRoot);
-      return;
-    }
+    const title = settings.uiPosition === 'list' ? findListTitle() : null;
+    let key;
+    let apply;
 
-    const danmakuList = document.querySelector(
-      '.bpx-player-dm-wrap, .bpx-player-dm-list, .bpx-player-dm'
-    );
-    if (danmakuList && danmakuList.parentElement) {
-      uiRoot.style.cssText =
-        'position:relative;z-index:80;width:max-content;max-width:100%;margin:8px 0;' +
-        'pointer-events:auto;';
-      if (uiRoot.parentElement !== danmakuList.parentElement ||
-          uiRoot.nextElementSibling !== danmakuList) {
-        danmakuList.parentElement.insertBefore(uiRoot, danmakuList);
+    if (title && title.parentElement) {
+      key = 'list';
+      apply = () => {
+        uiRoot.style.cssText =
+          'position:relative;display:inline-block;vertical-align:middle;margin-left:8px;z-index:80;';
+        panelAlign('left');
+      };
+      if (uiRoot.previousElementSibling !== title || uiRoot.parentElement !== title.parentElement) {
+        title.after(uiRoot);
+        placedKey = '';
       }
-      return;
+    } else if (player) {
+      const pos = PLAYER_POS_CSS[settings.uiPosition] ? settings.uiPosition : 'top-right';
+      key = `player:${pos}`;
+      apply = () => {
+        uiRoot.style.cssText = `position:absolute;z-index:80;${PLAYER_POS_CSS[pos]}`;
+        panelAlign(pos === 'top' ? 'center' : pos.endsWith('left') ? 'left' : 'right');
+      };
+      if (uiRoot.parentElement !== player) {
+        if (getComputedStyle(player).position === 'static') player.style.position = 'relative';
+        player.appendChild(uiRoot);
+        placedKey = '';
+      }
+    } else {
+      key = 'free';
+      apply = () => {
+        uiRoot.style.cssText = 'position:relative;z-index:80;margin:8px;';
+        panelAlign('left');
+      };
     }
 
-    uiRoot.style.cssText = 'position:relative;z-index:80;margin:8px;pointer-events:auto;';
+    if (key !== placedKey) {
+      placedKey = key;
+      apply();
+      refreshVisibility();
+    }
+  }
+
+  function panelAlign(side) {
+    if (!settingsPanel) return;
+    settingsPanel.style.left = side === 'left' ? '0' : side === 'center' ? '50%' : 'auto';
+    settingsPanel.style.right = side === 'right' ? '0' : 'auto';
+    settingsPanel.style.transform = side === 'center' ? 'translateX(-50%)' : 'none';
+  }
+
+  function refreshVisibility() {
+    if (!uiRoot) return;
+    const show = settings.uiVisibility === 'always' || panelOpen || nearUI;
+    uiRoot.style.opacity = show ? '1' : '0';
+    uiRoot.style.pointerEvents = show ? 'auto' : 'none';
+  }
+
+  // 鼠标靠近按钮大致位置时才显示
+  function onMouseMove(e) {
+    if (settings.uiVisibility === 'always' || !uiRoot || !btn) return;
+    const r = btn.getBoundingClientRect();
+    const m = 80;
+    const near = e.clientX > r.left - m && e.clientX < r.right + m &&
+      e.clientY > r.top - m && e.clientY < r.bottom + m;
+    if (near !== nearUI) {
+      nearUI = near;
+      refreshVisibility();
+    }
   }
 
   function ensureLayer() {
@@ -279,7 +362,38 @@
   let btn;
   let btnLabel;
   let settingsPanel;
+  let placedKey = '';
+  let panelOpen = false;
+  let nearUI = false;
+  let openTimer = 0;
+  let closeTimer = 0;
   function setBtn(t) { if (btnLabel) btnLabel.textContent = t; }
+
+  function addSelectRow(label, key, options) {
+    const row = document.createElement('label');
+    row.style.cssText = 'display:grid;grid-template-columns:auto 1fr;gap:8px;align-items:center;';
+    const title = document.createElement('span');
+    title.textContent = label;
+    const select = document.createElement('select');
+    select.style.cssText = 'min-width:0;background:#333;color:#fff;border:1px solid #666;border-radius:4px;padding:2px;';
+    options.forEach(([value, text]) => {
+      const opt = document.createElement('option');
+      opt.value = value;
+      opt.textContent = text;
+      select.appendChild(opt);
+    });
+    select.value = settings[key];
+    select.addEventListener('change', () => {
+      settings[key] = select.value;
+      saveUiPrefs();
+      placedKey = '';
+      nearUI = true;
+      positionUI();
+      refreshVisibility();
+    });
+    row.append(title, select);
+    settingsPanel.appendChild(row);
+  }
 
   function updateSettingsLabels() {
     settingsPanel.querySelectorAll('input[type="range"]').forEach((input) => {
@@ -324,37 +438,69 @@
     uiRoot.id = 'local-danmaku-controls';
     uiRoot.style.cssText = 'position:relative;z-index:80;margin:8px;pointer-events:auto;';
 
+    // 圆角方形图标按钮：悬停展开面板，展开前点击直接导入
     btn = document.createElement('div');
+    btn.title = '本地弹幕';
     btn.style.cssText =
-      'display:inline-block;background:#00a1d6;color:#fff;' +
-      'padding:6px 10px;border-radius:6px;font-size:13px;cursor:pointer;user-select:none;opacity:.85;';
-    btnLabel = document.createElement('span');
-    btnLabel.textContent = '导入本地弹幕XML';
-    btnLabel.onclick = () => input.click();
-    btn.appendChild(btnLabel);
+      'display:flex;align-items:center;justify-content:center;width:28px;height:28px;' +
+      'box-sizing:border-box;background:#00a1d6;color:#fff;border-radius:6px;cursor:pointer;' +
+      'user-select:none;box-shadow:0 1px 4px rgba(0,0,0,.4);';
+    btn.innerHTML =
+      '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
+      'stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+      '<path d="M21 15a2 2 0 0 1-2 2H8l-5 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>' +
+      '<path d="M8 9h8M8 13h5"/></svg>';
+    btn.onclick = () => {
+      clearTimeout(openTimer);
+      input.click();
+    };
 
-    const toggle = document.createElement('span');
-    toggle.textContent = ' [开]';
-    toggle.style.marginLeft = '6px';
-    toggle.onclick = (e) => {
-      e.stopPropagation();
-      enabled = !enabled;
-      toggle.textContent = enabled ? ' [开]' : ' [关]';
+    settingsPanel = document.createElement('div');
+    settingsPanel.style.cssText =
+      'display:none;gap:6px;position:absolute;top:calc(100% + 6px);z-index:81;width:220px;' +
+      'max-height:70vh;overflow:auto;box-sizing:border-box;padding:12px;' +
+      'background:rgba(20,20,20,.94);color:#fff;border-radius:6px;' +
+      'font-size:12px;line-height:1.4;cursor:default;text-align:left;';
+
+    const info = document.createElement('div');
+    info.style.cssText = 'display:flex;justify-content:space-between;align-items:center;gap:8px;';
+    btnLabel = document.createElement('span');
+    btnLabel.textContent = '未导入本地弹幕';
+    const importBtn = document.createElement('span');
+    importBtn.textContent = '导入XML';
+    importBtn.style.cssText = 'cursor:pointer;color:#00a1d6;white-space:nowrap;';
+    importBtn.onclick = () => input.click();
+    info.append(btnLabel, importBtn);
+    settingsPanel.appendChild(info);
+
+    const enableRow = document.createElement('label');
+    enableRow.style.cssText = 'display:flex;align-items:center;gap:6px;';
+    const enableBox = document.createElement('input');
+    enableBox.type = 'checkbox';
+    enableBox.checked = enabled;
+    enableBox.addEventListener('change', () => {
+      enabled = enableBox.checked;
       if (layer) layer.style.visibility = enabled ? 'visible' : 'hidden';
       if (enabled && video) setPaused(video.paused);
       else setPaused(true);
-    };
-    btn.appendChild(toggle);
+    });
+    const enableText = document.createElement('span');
+    enableText.textContent = '显示本地弹幕';
+    enableRow.append(enableBox, enableText);
+    settingsPanel.appendChild(enableRow);
 
-    const settingsToggle = document.createElement('span');
-    settingsToggle.textContent = ' [设置]';
-    settingsToggle.style.marginLeft = '6px';
-    settingsPanel = document.createElement('div');
-    settingsPanel.style.cssText =
-      'display:none;position:absolute;top:calc(100% + 6px);right:0;z-index:81;width:220px;' +
-      'max-height:80vh;overflow:auto;box-sizing:border-box;padding:12px;' +
-      'background:rgba(20,20,20,.94);color:#fff;border-radius:6px;' +
-      'font-size:12px;line-height:1.4;cursor:default;';
+    addSelectRow('按钮显示', 'uiVisibility', [['always', '始终显示'], ['hover', '鼠标靠近显示']]);
+    addSelectRow('按钮位置', 'uiPosition', [
+      ['top', '播放器上方'],
+      ['top-left', '播放器左上'],
+      ['top-right', '播放器右上'],
+      ['mid-left', '播放器左中'],
+      ['mid-right', '播放器右中'],
+      ['list', '弹幕列表右边'],
+    ]);
+    const separator0 = document.createElement('div');
+    separator0.style.cssText = 'border-top:1px solid #555;';
+    settingsPanel.appendChild(separator0);
     addSettingRow('显示区域', 'displayArea', 25, 100, 25);
     addSettingRow('不透明度', 'opacity', 10, 100, 5);
     addSettingRow('弹幕字号', 'fontScale', 50, 200, 10);
@@ -368,17 +514,45 @@
     addSettingToggle('顶部', 'blockTop');
     addSettingToggle('底部', 'blockBottom');
     addSettingToggle('彩色', 'blockColorful');
-    settingsToggle.onclick = (e) => {
-      e.stopPropagation();
-      settingsPanel.style.display = settingsPanel.style.display === 'none' ? 'grid' : 'none';
+    const openPanel = () => {
+      panelOpen = true;
+      settingsPanel.style.display = 'grid';
+      refreshVisibility();
     };
-    btn.appendChild(settingsToggle);
+    const closePanel = () => {
+      if (settingsPanel.contains(document.activeElement)) return;
+      panelOpen = false;
+      settingsPanel.style.display = 'none';
+      refreshVisibility();
+    };
+    uiRoot.addEventListener('mouseenter', () => {
+      clearTimeout(closeTimer);
+      if (!panelOpen) openTimer = setTimeout(openPanel, PANEL_DELAY);
+    });
+    uiRoot.addEventListener('mouseleave', () => {
+      clearTimeout(openTimer);
+      closeTimer = setTimeout(closePanel, 300);
+    });
+    // 避免点击/按键冒泡到播放器触发暂停或快捷键
+    ['click', 'dblclick', 'mousedown', 'keydown', 'keyup'].forEach((type) => {
+      uiRoot.addEventListener(type, (e) => e.stopPropagation());
+    });
+
     uiRoot.append(input, btn, settingsPanel);
     document.body.appendChild(uiRoot);
     positionUI();
     updateSettingsLabels();
+    document.addEventListener('mousemove', onMouseMove, { passive: true });
 
-    new MutationObserver(positionUI).observe(document.body, { childList: true, subtree: true });
+    let scheduled = false;
+    new MutationObserver(() => {
+      if (scheduled) return;
+      scheduled = true;
+      requestAnimationFrame(() => {
+        scheduled = false;
+        positionUI();
+      });
+    }).observe(document.body, { childList: true, subtree: true });
   }
 
   createUI();

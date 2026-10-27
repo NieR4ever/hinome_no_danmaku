@@ -30,7 +30,6 @@
   };
 
   const UI_PREFS_KEY = 'local-danmaku-ui';
-  const PANEL_DELAY = 400; // 悬停后展开面板的延迟(ms)
   try {
     const saved = JSON.parse(localStorage.getItem(UI_PREFS_KEY) || '{}');
     if (['always', 'hover'].includes(saved.uiVisibility)) settings.uiVisibility = saved.uiVisibility;
@@ -136,11 +135,11 @@
       key = 'list';
       apply = () => {
         uiRoot.style.cssText =
-          'position:relative;display:inline-block;vertical-align:middle;margin-left:8px;z-index:80;';
+          'position:relative;display:inline-block;vertical-align:middle;margin-right:8px;z-index:80;';
         panelAlign('left');
       };
-      if (uiRoot.previousElementSibling !== title || uiRoot.parentElement !== title.parentElement) {
-        title.after(uiRoot);
+      if (uiRoot.nextElementSibling !== title || uiRoot.parentElement !== title.parentElement) {
+        title.before(uiRoot);
         placedKey = '';
       }
     } else if (player) {
@@ -179,9 +178,14 @@
 
   function refreshVisibility() {
     if (!uiRoot) return;
-    const show = settings.uiVisibility === 'always' || panelOpen || nearUI;
+    const locked = placedKey === 'list';
+    const show = locked || settings.uiVisibility === 'always' || panelOpen || nearUI;
     uiRoot.style.opacity = show ? '1' : '0';
     uiRoot.style.pointerEvents = show ? 'auto' : 'none';
+    if (visibilitySelect) {
+      visibilitySelect.disabled = locked;
+      visibilitySelect.value = locked ? 'always' : settings.uiVisibility;
+    }
   }
 
   // 鼠标靠近按钮大致位置时才显示
@@ -365,8 +369,7 @@
   let placedKey = '';
   let panelOpen = false;
   let nearUI = false;
-  let openTimer = 0;
-  let closeTimer = 0;
+  let visibilitySelect;
   function setBtn(t) { if (btnLabel) btnLabel.textContent = t; }
 
   function addSelectRow(label, key, options) {
@@ -383,6 +386,7 @@
       select.appendChild(opt);
     });
     select.value = settings[key];
+    if (key === 'uiVisibility') visibilitySelect = select;
     select.addEventListener('change', () => {
       settings[key] = select.value;
       saveUiPrefs();
@@ -427,6 +431,18 @@
     settingsPanel.appendChild(row);
   }
 
+  function openPanel() {
+    panelOpen = true;
+    settingsPanel.style.display = 'grid';
+    refreshVisibility();
+  }
+
+  function closePanel() {
+    panelOpen = false;
+    settingsPanel.style.display = 'none';
+    refreshVisibility();
+  }
+
   function createUI() {
     const input = document.createElement('input');
     input.type = 'file';
@@ -438,7 +454,7 @@
     uiRoot.id = 'local-danmaku-controls';
     uiRoot.style.cssText = 'position:relative;z-index:80;margin:8px;pointer-events:auto;';
 
-    // 圆角方形图标按钮：悬停展开面板，展开前点击直接导入
+    // 圆角方形图标按钮：点击展开/收起面板
     btn = document.createElement('div');
     btn.title = '本地弹幕';
     btn.style.cssText =
@@ -450,15 +466,12 @@
       'stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
       '<path d="M21 15a2 2 0 0 1-2 2H8l-5 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>' +
       '<path d="M8 9h8M8 13h5"/></svg>';
-    btn.onclick = () => {
-      clearTimeout(openTimer);
-      input.click();
-    };
+    btn.onclick = () => (panelOpen ? closePanel() : openPanel());
 
     settingsPanel = document.createElement('div');
     settingsPanel.style.cssText =
       'display:none;gap:6px;position:absolute;top:calc(100% + 6px);z-index:81;width:220px;' +
-      'max-height:70vh;overflow:auto;box-sizing:border-box;padding:12px;' +
+      'max-height:70vh;overflow:auto;overscroll-behavior:contain;box-sizing:border-box;padding:12px;' +
       'background:rgba(20,20,20,.94);color:#fff;border-radius:6px;' +
       'font-size:12px;line-height:1.4;cursor:default;text-align:left;';
 
@@ -496,7 +509,7 @@
       ['top-right', '播放器右上'],
       ['mid-left', '播放器左中'],
       ['mid-right', '播放器右中'],
-      ['list', '弹幕列表右边'],
+      ['list', '弹幕列表左边'],
     ]);
     const separator0 = document.createElement('div');
     separator0.style.cssText = 'border-top:1px solid #555;';
@@ -514,25 +527,15 @@
     addSettingToggle('顶部', 'blockTop');
     addSettingToggle('底部', 'blockBottom');
     addSettingToggle('彩色', 'blockColorful');
-    const openPanel = () => {
-      panelOpen = true;
-      settingsPanel.style.display = 'grid';
-      refreshVisibility();
-    };
-    const closePanel = () => {
-      if (settingsPanel.contains(document.activeElement)) return;
-      panelOpen = false;
-      settingsPanel.style.display = 'none';
-      refreshVisibility();
-    };
-    uiRoot.addEventListener('mouseenter', () => {
-      clearTimeout(closeTimer);
-      if (!panelOpen) openTimer = setTimeout(openPanel, PANEL_DELAY);
-    });
-    uiRoot.addEventListener('mouseleave', () => {
-      clearTimeout(openTimer);
-      closeTimer = setTimeout(closePanel, 300);
-    });
+    // 面板上的滚轮只滚动面板本身，不影响页面和播放器音量
+    settingsPanel.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      settingsPanel.scrollTop += e.deltaY;
+    }, { passive: false });
+    document.addEventListener('mousedown', (e) => {
+      if (panelOpen && !uiRoot.contains(e.target)) closePanel();
+    }, true);
     // 避免点击/按键冒泡到播放器触发暂停或快捷键
     ['click', 'dblclick', 'mousedown', 'keydown', 'keyup'].forEach((type) => {
       uiRoot.addEventListener(type, (e) => e.stopPropagation());

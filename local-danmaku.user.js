@@ -536,7 +536,10 @@
     refreshVisibility();
   }
 
+  let showMainMenu = () => {};
+
   function closePanel() {
+    showMainMenu();
     panelOpen = false;
     settingsPanel.style.display = 'none';
     refreshVisibility();
@@ -592,7 +595,7 @@
   // 二级菜单：把主面板内容收进 mainView，屏蔽词编辑放到 subView
   function buildBlockWordsMenu() {
     const mainView = document.createElement('div');
-    mainView.style.cssText = 'display:grid;gap:6px;';
+    mainView.style.cssText = 'display:grid;grid-template-columns:minmax(0,1fr);gap:6px;';
     while (settingsPanel.firstChild) mainView.appendChild(settingsPanel.firstChild);
 
     const entry = document.createElement('div');
@@ -613,7 +616,7 @@
     mainView.appendChild(entry);
 
     const subView = document.createElement('div');
-    subView.style.cssText = 'display:none;gap:6px;';
+    subView.style.cssText = 'display:none;grid-template-columns:minmax(0,1fr);gap:6px;min-width:0;';
     const back = document.createElement('div');
     back.textContent = '‹ 屏蔽词';
     back.style.cssText = 'cursor:pointer;color:#00a1d6;';
@@ -625,7 +628,7 @@
     area.rows = 8;
     area.spellcheck = false;
     area.style.cssText =
-      'width:100%;box-sizing:border-box;resize:vertical;background:#333;color:#fff;' +
+      'display:block;width:100%;min-width:0;max-width:100%;box-sizing:border-box;resize:vertical;background:#333;color:#fff;' +
       'border:1px solid #666;border-radius:4px;padding:4px;font-size:12px;';
     const apply = () => {
       blockWords = area.value.split('\n').map((x) => x.trim()).filter(Boolean);
@@ -646,6 +649,7 @@
       subView.style.display = sub ? 'grid' : 'none';
       fitPanel();
     };
+    showMainMenu = () => show(false);
     entry.onclick = () => show(true);
     back.onclick = () => show(false);
     settingsPanel.append(mainView, subView);

@@ -455,9 +455,20 @@
         buttonBounds.left + buttonBounds.width / 2 - panelWidth / 2,
         maxLeft
       ));
-      settingsPanel.style.left = `${left - uiRoot.getBoundingClientRect().left}px`;
+      const minTop = Math.max(8, bounds.top + 8);
+      const maxBottom = Math.min(window.innerHeight - 8, bounds.bottom - 8);
+      settingsPanel.style.maxHeight = `${Math.max(0, maxBottom - minTop)}px`;
+      const panelHeight = settingsPanel.offsetHeight;
+      const top = Math.max(minTop, Math.min(
+        buttonBounds.top + buttonBounds.height / 2 - panelHeight / 2,
+        maxBottom - panelHeight
+      ));
+      const rootBounds = uiRoot.getBoundingClientRect();
+      settingsPanel.style.left = `${left - rootBounds.left}px`;
       settingsPanel.style.right = 'auto';
+      settingsPanel.style.top = `${top - rootBounds.top}px`;
       settingsPanel.style.transform = 'none';
+      return;
     }
     const limit = inPlayer ? host.getBoundingClientRect().bottom : window.innerHeight;
     const top = settingsPanel.getBoundingClientRect().top;

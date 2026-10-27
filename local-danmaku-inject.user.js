@@ -13,7 +13,7 @@
   'use strict';
 
   const SEG_MS = 360000; // 弹幕分段长度（6分钟）
-  const SEG_RE = /\/x\/v2\/dm\/(?:wbi\/)?web\/seg\.so/;
+  const SEG_RE = /\/dm\/[^?#]*seg\.so/;
   const DB_NAME = 'local-danmaku-inject';
   const STORE = 'files';
 
@@ -259,16 +259,26 @@
 
   // 诊断：统计页面实际发出的弹幕分段请求，用于区分“未被拦截”(如在 Worker 中请求)和“格式不符”
   let perfSeen = 0;
+  const dmUrls = []; // 页面上所有疑似弹幕的请求，便于排查接口变化
   try {
     new PerformanceObserver((list) => {
-      for (const e of list.getEntries()) if (SEG_RE.test(e.name)) perfSeen++;
+      for (const e of list.getEntries()) {
+        if (SEG_RE.test(e.name)) perfSeen++;
+        if (/dm|danmaku|danmu|seg/i.test(e.name) && dmUrls.length < 20) {
+          dmUrls.push(e.name.replace(/\?.*/, ''));
+          console.info('[本地弹幕] 发现疑似弹幕请求:', e.name, e.initiatorType);
+        }
+      }
     }).observe({ type: 'resource', buffered: true });
   } catch (e) {
     // 不支持时忽略
   }
 
+  console.info('[本地弹幕] 脚本已启动，页面:', location.href);
+
   function statusText() {
     if (!danmakus.length) return '导入本地弹幕XML';
+    if (!perfSeen && !stats.seen && dmUrls.length) return '本地弹幕: 弹幕接口地址已变化';
     if (stats.merged) return `本地弹幕: 已注入${stats.added}条`;
     if (stats.incompatible) return '本地弹幕: 格式不符，未注入';
     if (perfSeen && !stats.seen) return '本地弹幕: 请求未被拦截';
@@ -319,7 +329,7 @@
     const label = document.createElement('span');
     const refreshLabel = () => {
       label.textContent = statusText();
-      label.title = stats.error || `已拦截弹幕请求 ${stats.seen} 次，页面共发出 ${perfSeen} 次`;
+      label.title = stats.error || (dmUrls.length && !perfSeen ? `疑似弹幕请求: ${dmUrls.join(' | ')}` : '') || `已拦截弹幕请求 ${stats.seen} 次，页面共发出 ${perfSeen} 次`;
     };
     setInterval(refreshLabel, 1000);
     label.onclick = () => input.click();

@@ -136,7 +136,7 @@
       key = 'list';
       apply = () => {
         uiRoot.style.cssText =
-          'position:relative;display:inline-block;vertical-align:middle;margin-right:8px;z-index:80;';
+          'position:relative;display:inline-block;vertical-align:middle;margin-right:8px;z-index:2147483000;';
         panelAlign('left');
       };
       if (uiRoot.nextElementSibling !== title || uiRoot.parentElement !== title.parentElement) {
@@ -147,7 +147,7 @@
       const pos = PLAYER_POS_CSS[settings.uiPosition] ? settings.uiPosition : 'top-right';
       key = `player:${pos}`;
       apply = () => {
-        uiRoot.style.cssText = `position:absolute;z-index:80;${PLAYER_POS_CSS[pos]}`;
+        uiRoot.style.cssText = `position:absolute;z-index:2147483000;${PLAYER_POS_CSS[pos]}`;
         panelAlign(pos.endsWith('right') ? 'right' : 'left');
       };
       if (uiRoot.parentElement !== player) {
@@ -158,7 +158,7 @@
     } else {
       key = 'free';
       apply = () => {
-        uiRoot.style.cssText = 'position:relative;z-index:80;margin:8px;';
+        uiRoot.style.cssText = 'position:relative;z-index:2147483000;margin:8px;';
         panelAlign('left');
       };
     }
@@ -568,7 +568,7 @@
 
     uiRoot = document.createElement('div');
     uiRoot.id = 'local-danmaku-controls';
-    uiRoot.style.cssText = 'position:relative;z-index:80;margin:8px;pointer-events:auto;';
+    uiRoot.style.cssText = 'position:relative;z-index:2147483000;margin:8px;pointer-events:auto;';
 
     // 圆角方形图标按钮：点击展开/收起面板
     btn = document.createElement('div');
@@ -586,8 +586,8 @@
 
     settingsPanel = document.createElement('div');
     settingsPanel.style.cssText =
-      'display:none;gap:6px;position:absolute;top:calc(100% + 6px);z-index:81;width:220px;' +
-      'max-height:70vh;overflow:auto;overscroll-behavior:contain;box-sizing:border-box;padding:12px;' +
+      'display:none;gap:6px;position:absolute;top:calc(100% + 6px);z-index:2147483001;width:220px;' +
+      'max-height:70vh;overflow:auto;overscroll-behavior:contain;box-sizing:border-box;padding:12px;pointer-events:auto;' +
       'background:rgba(20,20,20,.94);color:#fff;border-radius:6px;' +
       'font-size:12px;line-height:1.4;cursor:default;text-align:left;';
 
@@ -657,6 +657,9 @@
     // 避免点击/按键冒泡到播放器触发暂停或快捷键
     ['click', 'dblclick', 'mousedown', 'keydown', 'keyup'].forEach((type) => {
       uiRoot.addEventListener(type, (e) => e.stopPropagation());
+    });
+    ['mousemove', 'mouseover', 'pointermove', 'pointerover'].forEach((type) => {
+      settingsPanel.addEventListener(type, (e) => e.stopPropagation());
     });
 
     uiRoot.append(input, btn, settingsPanel);

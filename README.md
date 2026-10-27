@@ -1,7 +1,9 @@
 # B站本地弹幕 XML 注入
 
 在哔哩哔哩视频播放器上加载本地弹幕 XML 文件，让弹幕随视频进度同步显示。适用于 B 站视频、番剧和视频列表页面。
-
+<div align="center"><img id="预览图" width="500" alt="预览图" src="./PixPin_2026-10-27_16-11-17(小).png"></div>
+<br>
+<div align="center">
 ## 安装
 
 需要浏览器装有 [Tampermonkey](https://tampermonkey.net/) 或 [Violentmonkey](https://violentmonkey.github.io/) 插件。

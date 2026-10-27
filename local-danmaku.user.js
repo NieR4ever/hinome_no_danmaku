@@ -15,8 +15,17 @@
 
   const SCROLL_TIME = 8; // 滚动弹幕穿越时间(秒)
   const FIXED_TIME = 4;  // 顶部/底部弹幕停留时间(秒)
-  const FONT_SCALE = 1;
-  const OPACITY = 0.9;
+  const settings = {
+    displayArea: 100,
+    opacity: 90,
+    fontScale: 100,
+    speed: 100,
+    scaleWithScreen: true,
+    blockScroll: false,
+    blockTop: false,
+    blockBottom: false,
+    blockColorful: false,
+  };
 
   let danmakus = []; // {t, mode, size, color, text}
   let layer = null;
@@ -34,16 +43,39 @@
       const p = (el.getAttribute('p') || '').split(',');
       const t = parseFloat(p[0]);
       if (isNaN(t)) return;
+      const parsedColor = parseInt(p[3], 10);
       list.push({
         t,
         mode: parseInt(p[1], 10) || 1,
         size: parseInt(p[2], 10) || 25,
-        color: parseInt(p[3], 10) || 0xffffff,
+        color: Number.isNaN(parsedColor) ? 0xffffff : parsedColor,
         text: el.textContent,
       });
     });
     list.sort((a, b) => a.t - b.t);
     return list;
+  }
+
+  function addSettingToggle(label, key) {
+    const row = document.createElement('label');
+    row.style.cssText = 'display:flex;align-items:center;gap:6px;';
+    const input = document.createElement('input');
+    input.type = 'checkbox';
+    input.checked = settings[key];
+    input.addEventListener('change', () => {
+      settings[key] = input.checked;
+      if (input.checked && layer) {
+        layer.querySelectorAll('[data-danmaku-position]').forEach((el) => {
+          if (isBlocked(el.dataset.danmakuPosition, el.dataset.danmakuColorful === 'true')) {
+            el.remove();
+          }
+        });
+      }
+    });
+    const title = document.createElement('span');
+    title.textContent = label;
+    row.append(input, title);
+    settingsPanel.appendChild(row);
   }
 
   function findVideo() {
@@ -59,10 +91,21 @@
     layer = document.createElement('div');
     layer.id = 'local-danmaku-layer';
     layer.style.cssText =
-      'position:absolute;inset:0;overflow:hidden;pointer-events:none;z-index:50;';
+      'position:absolute;top:0;left:0;width:100%;overflow:hidden;pointer-events:none;z-index:50;';
     if (getComputedStyle(host).position === 'static') host.style.position = 'relative';
     host.appendChild(layer);
+    applySettings();
     return true;
+  }
+
+  function applySettings() {
+    if (layer) {
+      layer.style.height = `${settings.displayArea}%`;
+      layer.querySelectorAll('[data-danmaku-opacity]').forEach((el) => {
+        el.style.opacity = settings.opacity / 100;
+      });
+    }
+    if (settingsPanel) updateSettingsLabels();
   }
 
   function clearScreen() {
@@ -91,11 +134,20 @@
     return -1;
   }
 
+  function isBlocked(position, colorful) {
+    return (settings.blockScroll && position === 'scroll') ||
+      (settings.blockTop && position === 'top') ||
+      (settings.blockBottom && position === 'bottom') ||
+      (settings.blockColorful && colorful);
+  }
+
   function emit(d) {
     const w = layer.clientWidth;
     const h = layer.clientHeight;
     if (!w || !h) return;
-    const fontSize = Math.max(12, Math.round(d.size * FONT_SCALE * (h / 600 > 1 ? h / 600 : 1) * 0.8 + 6));
+    const playerHeight = layer.parentElement.clientHeight;
+    const screenScale = settings.scaleWithScreen ? playerHeight / 600 : 1;
+    const fontSize = Math.max(12, Math.round(d.size * (settings.fontScale / 100) * screenScale * 0.8 + 6));
     const laneH = fontSize + 4;
     const maxLanes = Math.max(1, Math.floor((h * 0.8) / laneH));
     const now = performance.now() / 1000;
@@ -104,10 +156,13 @@
     el.textContent = d.text;
     el.style.cssText =
       `position:absolute;white-space:pre;font-weight:bold;font-family:SimHei,"Microsoft YaHei",sans-serif;` +
-      `font-size:${fontSize}px;line-height:${laneH}px;opacity:${OPACITY};will-change:transform;` +
+      `font-size:${fontSize}px;line-height:${laneH}px;opacity:${settings.opacity / 100};will-change:transform;` +
       `color:#${(d.color & 0xffffff).toString(16).padStart(6, '0')};` +
       'text-shadow:1px 0 1px #000,0 1px 1px #000,0 -1px 1px #000,-1px 0 1px #000;';
     layer.appendChild(el);
+    el.dataset.danmakuOpacity = 'true';
+    el.dataset.danmakuPosition = d.mode === 5 ? 'top' : d.mode === 4 ? 'bottom' : 'scroll';
+    el.dataset.danmakuColorful = String((d.color & 0xffffff) !== 0xffffff);
     const tw = el.offsetWidth;
 
     if (d.mode === 4 || d.mode === 5) {
@@ -117,13 +172,18 @@
       el.style.left = `${(w - tw) / 2}px`;
       if (key === 'top') el.style.top = `${lane * laneH}px`;
       else el.style.bottom = `${lane * laneH}px`;
-      setTimeout(() => el.remove(), FIXED_TIME * 1000);
-      el._fixed = { born: now };
+      const timer = el.animate(
+        [{ transform: 'translateY(0)' }, { transform: 'translateY(0)' }],
+        { duration: FIXED_TIME * 1000 }
+      );
+      timer.onfinish = () => el.remove();
+      if (video.paused || !enabled) timer.pause();
       return;
     }
 
     // 滚动弹幕：按进入屏幕所需时间占用车道，避免重叠
-    const speed = (w + tw) / SCROLL_TIME;
+    const duration = SCROLL_TIME * 100 / settings.speed;
+    const speed = (w + tw) / duration;
     const clearTime = now + tw / speed + 0.3;
     const lane = pickLane(lanes.scroll, now, laneH, maxLanes, clearTime);
     if (lane < 0) return el.remove();
@@ -131,10 +191,10 @@
     el.style.left = '0';
     const anim = el.animate(
       [{ transform: `translateX(${w}px)` }, { transform: `translateX(${-tw}px)` }],
-      { duration: SCROLL_TIME * 1000, easing: 'linear', fill: 'forwards' }
+      { duration: duration * 1000, easing: 'linear', fill: 'forwards' }
     );
     anim.onfinish = () => el.remove();
-    if (video.paused) anim.pause();
+    if (video.paused || !enabled) anim.pause();
   }
 
   function setPaused(paused) {
@@ -151,8 +211,11 @@
     if (video.paused) return;
     let count = 0;
     while (idx < danmakus.length && danmakus[idx].t <= t) {
-      if (t - danmakus[idx].t < 1.5 && count < 30) {
-        emit(danmakus[idx]);
+      const d = danmakus[idx];
+      const position = d.mode === 5 ? 'top' : d.mode === 4 ? 'bottom' : 'scroll';
+      const colorful = (d.color & 0xffffff) !== 0xffffff;
+      if (!isBlocked(position, colorful) && t - d.t < 1.5 && count < 30) {
+        emit(d);
         count++;
       }
       idx++;
@@ -181,7 +244,40 @@
   }
 
   let btn;
+  let settingsPanel;
   function setBtn(t) { if (btn) btn.firstChild.textContent = t; }
+
+  function updateSettingsLabels() {
+    settingsPanel.querySelectorAll('input[type="range"]').forEach((input) => {
+      const output = input.parentElement.querySelector('output');
+      const value = settings[input.dataset.setting];
+      output.textContent = input.dataset.setting === 'speed'
+        ? `${(value / 100).toFixed(1)}x`
+        : `${value}%`;
+    });
+  }
+
+  function addSettingRow(label, key, min, max, step) {
+    const row = document.createElement('label');
+    row.style.cssText = 'display:grid;grid-template-columns:1fr auto;gap:4px 8px;align-items:center;';
+    const title = document.createElement('span');
+    title.textContent = label;
+    const output = document.createElement('output');
+    const input = document.createElement('input');
+    input.type = 'range';
+    input.min = min;
+    input.max = max;
+    input.step = step;
+    input.value = settings[key];
+    input.dataset.setting = key;
+    input.style.cssText = 'grid-column:1 / -1;width:100%;margin:0;accent-color:#00a1d6;';
+    input.addEventListener('input', () => {
+      settings[key] = Number(input.value);
+      applySettings();
+    });
+    row.append(title, output, input);
+    settingsPanel.appendChild(row);
+  }
 
   function createUI() {
     const input = document.createElement('input');
@@ -206,11 +302,41 @@
       e.stopPropagation();
       enabled = !enabled;
       toggle.textContent = enabled ? ' [开]' : ' [关]';
-      if (layer) layer.style.display = enabled ? '' : 'none';
-      if (enabled && video) seekTo(video.currentTime);
+      if (layer) layer.style.visibility = enabled ? 'visible' : 'hidden';
+      if (enabled && video) setPaused(video.paused);
+      else setPaused(true);
     };
     btn.appendChild(toggle);
+
+    const settingsToggle = document.createElement('span');
+    settingsToggle.textContent = ' [设置]';
+    settingsToggle.style.marginLeft = '6px';
+    settingsPanel = document.createElement('div');
+    settingsPanel.style.cssText =
+      'display:none;position:fixed;right:10px;bottom:112px;z-index:99999;width:220px;' +
+      'padding:12px;background:rgba(20,20,20,.94);color:#fff;border-radius:6px;' +
+      'font-size:12px;line-height:1.4;cursor:default;';
+    addSettingRow('显示区域', 'displayArea', 25, 100, 25);
+    addSettingRow('不透明度', 'opacity', 10, 100, 5);
+    addSettingRow('弹幕字号', 'fontScale', 50, 200, 10);
+    addSettingRow('弹幕速度', 'speed', 50, 200, 10);
+    addSettingToggle('弹幕随屏幕缩放', 'scaleWithScreen');
+    const separator = document.createElement('div');
+    separator.textContent = '屏蔽弹幕';
+    separator.style.cssText = 'margin-top:4px;padding-top:6px;border-top:1px solid #555;';
+    settingsPanel.appendChild(separator);
+    addSettingToggle('滚动', 'blockScroll');
+    addSettingToggle('顶部', 'blockTop');
+    addSettingToggle('底部', 'blockBottom');
+    addSettingToggle('彩色', 'blockColorful');
+    settingsToggle.onclick = (e) => {
+      e.stopPropagation();
+      settingsPanel.style.display = settingsPanel.style.display === 'none' ? 'grid' : 'none';
+    };
+    btn.appendChild(settingsToggle);
     document.body.append(input, btn);
+    document.body.appendChild(settingsPanel);
+    updateSettingsLabels();
   }
 
   createUI();

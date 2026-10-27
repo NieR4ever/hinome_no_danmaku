@@ -1,14 +1,13 @@
 // ==UserScript==
-// @name         B站本地弹幕XML注入（原生弹幕系统）
+// @name         B站本地弹幕XML注入（原生弹幕引擎）
 // @namespace    hinome_no_danmaku_inject
-// @version      1.2.0
-// @description  读取本地弹幕 XML（录播姬/B站格式），合并进B站弹幕分段响应（含 Web Worker 内的请求），由B站原生弹幕渲染、弹幕列表、屏蔽与设置接管
+// @version      2.0.0
+// @description  读取本地弹幕 XML（录播姬/B站格式），通过播放器自身的弹幕引擎 addList 接口加入，由B站原生系统负责渲染、屏蔽与设置；不拦截任何网络请求
 // @match        https://www.bilibili.com/video/*
 // @match        https://www.bilibili.com/list/*
 // @grant        none
 // @sandbox      MAIN
-// @inject-into   page
-// @run-at       document-start
+// @run-at       document-idle
 // ==/UserScript==
 
 (function () {
@@ -16,340 +15,127 @@
 
   const DB_NAME = 'local-danmaku-inject';
   const STORE = 'files';
-  const FLAG = 'local-danmaku-inject:enabled';
-  const CHANNEL = 'local-danmaku-inject';
+  const SUPPORTED_MODES = new Set([1, 4, 5, 6]); // 滚动/底部/顶部/逆向；高级弹幕(7+)需要特殊数据，跳过
+  const ID_BASE = 9000000000000000000n; // 避免与平台弹幕 id 冲突
+  const CHUNK = 500;
 
-  // core 会被序列化后注入 Web Worker（B站新版播放器在 Worker 里请求弹幕），
-  // 因此必须自包含：不能引用外部变量，且只使用主线程和 Worker 都有的 API
-  function core(report) {
-    const SEG_MS = 360000; // 弹幕分段长度（6分钟）
-    const SEG_RE = /\/dm\/[^?#]*seg\.so/;
-    const DB_NAME = 'local-danmaku-inject';
-    const STORE = 'files';
+  let list = []; // 已转换为播放器弹幕数据格式
+  let skipped = 0;
+  let engine = null;
+  let status = '导入本地弹幕XML';
+  let injecting = false;
 
-    let danmakus = []; // {t(ms), mode, size, color, ctime, pool, text}
-    let loaded = false;
-
-    function loadSaved() {
-      return new Promise((resolve) => {
-        try {
-          const req = indexedDB.open(DB_NAME, 1);
-          req.onupgradeneeded = () => req.result.createObjectStore(STORE);
-          req.onerror = () => resolve();
-          req.onsuccess = () => {
-            try {
-              const get = req.result.transaction(STORE, 'readonly').objectStore(STORE).get('current');
-              get.onsuccess = () => {
-                if (get.result && Array.isArray(get.result.list)) danmakus = get.result.list;
-                resolve();
-              };
-              get.onerror = () => resolve();
-            } catch (e) {
-              resolve();
-            }
-          };
-        } catch (e) {
-          resolve();
-        }
-      }).then(() => {
-        loaded = true;
-        report({ type: 'loaded', count: danmakus.length });
+  // ---------- 解析 ----------
+  function parseXml(text) {
+    const doc = new DOMParser().parseFromString(text, 'text/xml');
+    const out = [];
+    let skip = 0;
+    doc.querySelectorAll('d').forEach((el) => {
+      const p = (el.getAttribute('p') || '').split(',');
+      const stime = parseFloat(p[0]);
+      const mode = parseInt(p[1], 10) || 1;
+      if (isNaN(stime)) return;
+      if (!SUPPORTED_MODES.has(mode)) {
+        skip++;
+        return;
+      }
+      const color = parseInt(p[3], 10);
+      out.push({
+        stime,
+        mode,
+        size: parseInt(p[2], 10) || 25,
+        color: Number.isNaN(color) ? 0xffffff : color & 0xffffff,
+        date: parseInt(p[4], 10) || 0,
+        pool: parseInt(p[5], 10) || 0,
+        text: el.textContent,
       });
-    }
-    const ready = loadSaved();
+    });
+    out.sort((a, b) => a.stime - b.stime);
+    return { list: out, skipped: skip };
+  }
 
-    // ---------- protobuf 编码（DanmakuElem，作为 DmSegMobileReply.elems 追加） ----------
-    const enc = new TextEncoder();
+  // 字段与播放器渲染时使用的 textData 一致
+  function toPlayerItem(d, i) {
+    const id = String(ID_BASE + BigInt(i));
+    return {
+      stime: d.stime,
+      mode: d.mode,
+      rawMode: d.mode,
+      size: d.size,
+      color: d.color,
+      text: d.text,
+      date: d.date,
+      weight: 11, // 高权重，避免被“弹幕密度”过滤
+      pool: d.pool,
+      dmid: id,
+      id_str: id,
+      uhash: 'local',
+      uname: '',
+      attr: 0,
+      dmFrom: 0,
+      likes: undefined,
+      border: false,
+      isHighLike: false,
+      isMine: false,
+      prefix: null,
+      suffix: null,
+      on: true,
+    };
+  }
 
-    function varint(out, value) {
-      let v = BigInt(value);
-      if (v < 0n) v += 1n << 64n;
-      while (v > 0x7fn) {
-        out.push(Number(v & 0x7fn) | 0x80);
-        v >>= 7n;
-      }
-      out.push(Number(v));
-    }
-
-    function putVarintField(out, field, value) {
-      varint(out, field << 3);
-      varint(out, value);
-    }
-
-    function putStringField(out, field, str) {
-      const bytes = enc.encode(str);
-      varint(out, (field << 3) | 2);
-      varint(out, bytes.length);
-      for (const b of bytes) out.push(b);
-    }
-
-    function encodeElem(d, i) {
-      const body = [];
-      const id = 9000000000000000000n + BigInt(i); // 避免与平台弹幕 id 冲突
-      putVarintField(body, 1, id);
-      putVarintField(body, 2, d.t);
-      putVarintField(body, 3, d.mode);
-      putVarintField(body, 4, d.size);
-      putVarintField(body, 5, d.color & 0xffffff);
-      putStringField(body, 6, 'local');
-      putStringField(body, 7, d.text);
-      putVarintField(body, 8, d.ctime);
-      putVarintField(body, 9, 11); // 高权重，避免被“弹幕密度”过滤掉
-      putVarintField(body, 11, d.pool);
-      putStringField(body, 12, String(id));
-      const out = [];
-      varint(out, (1 << 3) | 2);
-      varint(out, body.length);
-      for (const b of body) out.push(b);
-      return out;
-    }
-
-    function lowerBound(t) {
-      let lo = 0, hi = danmakus.length;
-      while (lo < hi) {
-        const mid = (lo + hi) >> 1;
-        if (danmakus[mid].t < t) lo = mid + 1; else hi = mid;
-      }
-      return lo;
-    }
-
-    // 最小 wire 格式扫描：只检查响应是否为结构完整的 protobuf，且弹幕条目(字段1)含
-    // progress(2)/content(7)；不符合预期时不改动响应，避免弄坏原生弹幕
-    function readVarint(bytes, pos) {
-      let result = 0, shift = 0;
-      for (let i = 0; i < 10; i++) {
-        if (pos >= bytes.length) return null;
-        const b = bytes[pos++];
-        result += (b & 0x7f) * 2 ** shift;
-        if (!(b & 0x80)) return [result, pos];
-        shift += 7;
-      }
+  // ---------- 与播放器引擎对接 ----------
+  function getEngine() {
+    try {
+      const dx = window.player && window.player.danmaku && window.player.danmaku.getDanmakuX();
+      return dx && typeof dx.addList === 'function' ? dx : null;
+    } catch (e) {
       return null;
     }
-
-    function scanFields(bytes, start, end, onField) {
-      let pos = start;
-      while (pos < end) {
-        const tag = readVarint(bytes, pos);
-        if (!tag) return false;
-        pos = tag[1];
-        const field = Math.floor(tag[0] / 8);
-        const wire = tag[0] % 8;
-        let valueStart = pos;
-        if (wire === 0) {
-          const v = readVarint(bytes, pos);
-          if (!v) return false;
-          pos = v[1];
-        } else if (wire === 1) {
-          pos += 8;
-        } else if (wire === 5) {
-          pos += 4;
-        } else if (wire === 2) {
-          const len = readVarint(bytes, pos);
-          if (!len) return false;
-          valueStart = len[1];
-          pos = valueStart + len[0];
-        } else {
-          return false;
-        }
-        if (pos > end) return false;
-        if (onField) onField(field, wire, valueStart, pos);
-      }
-      return pos === end;
-    }
-
-    function checkReply(bytes) {
-      let elemCount = 0;
-      let schemaOk = true;
-      const ok = scanFields(bytes, 0, bytes.length, (field, wire, s, e) => {
-        if (field !== 1 || wire !== 2) return;
-        elemCount++;
-        if (elemCount > 3) return; // 抽样检查前几条
-        const seen = new Set();
-        const inner = scanFields(bytes, s, e, (f) => seen.add(f));
-        if (!inner || !seen.has(2) || !seen.has(7)) schemaOk = false;
-      });
-      return ok && schemaOk;
-    }
-
-    // 仅追加到响应末尾：protobuf 中重复字段可直接拼接，无需解码平台数据
-    function merge(buffer, url) {
-      report({ type: 'seen', url: String(url).replace(/\?.*/, '') });
-      let seg;
-      try {
-        seg = parseInt(new URL(url).searchParams.get('segment_index'), 10);
-      } catch (e) {
-        report({ type: 'error', message: '无法解析分段参数' });
-        return buffer;
-      }
-      if (!seg || seg < 1 || !danmakus.length) return buffer;
-      const orig = new Uint8Array(buffer);
-      if (!checkReply(orig)) {
-        report({ type: 'incompatible', url });
-        return buffer;
-      }
-      const from = lowerBound((seg - 1) * SEG_MS);
-      const to = lowerBound(seg * SEG_MS);
-      if (from >= to) return buffer;
-      const extra = [];
-      for (let i = from; i < to; i++) {
-        for (const b of encodeElem(danmakus[i], i)) extra.push(b);
-      }
-      const merged = new Uint8Array(orig.length + extra.length);
-      merged.set(orig, 0);
-      merged.set(extra, orig.length);
-      report({ type: 'merged', seg, added: to - from });
-      return merged.buffer;
-    }
-
-    // ---------- 请求拦截 ----------
-    // 拦截 Response.prototype 而不是 fetch：即使播放器缓存了原生 fetch 也会经过这里
-    const resProto = Response.prototype;
-    const nativeArrayBuffer = resProto.arrayBuffer;
-    async function mergedBuffer(res) {
-      const buf = await nativeArrayBuffer.call(res);
-      try {
-        await ready;
-        return merge(buf, res.url);
-      } catch (e) {
-        report({ type: 'error', message: String(e) });
-        return buf;
-      }
-    }
-    function isSegResponse(res) {
-      return res.ok && SEG_RE.test(res.url || '');
-    }
-    resProto.arrayBuffer = function () {
-      return isSegResponse(this) ? mergedBuffer(this) : nativeArrayBuffer.apply(this, arguments);
-    };
-    const nativeBlob = resProto.blob;
-    resProto.blob = function () {
-      if (!isSegResponse(this)) return nativeBlob.apply(this, arguments);
-      const type = this.headers.get('content-type') || '';
-      return mergedBuffer(this).then((buf) => new Blob([buf], { type }));
-    };
-    if (resProto.bytes) {
-      const nativeBytes = resProto.bytes;
-      resProto.bytes = function () {
-        if (!isSegResponse(this)) return nativeBytes.apply(this, arguments);
-        return mergedBuffer(this).then((buf) => new Uint8Array(buf));
-      };
-    }
-
-    if (typeof XMLHttpRequest !== 'undefined') {
-      const xhrOpen = XMLHttpRequest.prototype.open;
-      XMLHttpRequest.prototype.open = function (method, url) {
-        this._ldUrl = String(url);
-        return xhrOpen.apply(this, arguments);
-      };
-      const responseDesc = Object.getOwnPropertyDescriptor(XMLHttpRequest.prototype, 'response');
-      const xhrMerged = new WeakMap();
-      Object.defineProperty(XMLHttpRequest.prototype, 'response', {
-        configurable: true,
-        enumerable: responseDesc.enumerable,
-        get() {
-          const value = responseDesc.get.call(this);
-          const url = this.responseURL || this._ldUrl;
-          if (!url || !SEG_RE.test(url) || !(value instanceof ArrayBuffer)) return value;
-          if (this.readyState !== 4 || this.status !== 200) return value;
-          if (!xhrMerged.has(this)) {
-            let out = value;
-            try {
-              if (loaded) out = merge(value, url);
-              else report({ type: 'error', message: '本地弹幕尚未载入完成，XHR 请求已跳过' });
-            } catch (e) {
-              report({ type: 'error', message: String(e) });
-            }
-            xhrMerged.set(this, out);
-          }
-          return xhrMerged.get(this);
-        },
-      });
-    }
-
-    report({ type: 'hello', worker: typeof window === 'undefined' });
-    return { ready, count: () => danmakus.length };
   }
 
-  // ---------- 状态统计（主线程与 Worker 的上报汇总） ----------
-  const stats = { seen: 0, merged: 0, added: 0, incompatible: 0, workers: 0, created: 0, error: '', urls: [] };
-  function onReport(m) {
-    if (m.type === 'hello' && m.worker) stats.workers++;
-    else if (m.type === 'seen') {
-      stats.seen++;
-      if (stats.urls.length < 5) stats.urls.push(m.url);
-    } else if (m.type === 'merged') {
-      stats.merged++;
-      stats.added += m.added;
-      console.info(`[本地弹幕] 分段 ${m.seg} 注入 ${m.added} 条`);
-    } else if (m.type === 'incompatible') {
-      stats.incompatible++;
-      console.warn('[本地弹幕] 弹幕响应格式与预期不符，未注入', m.url);
-    } else if (m.type === 'error') {
-      stats.error = m.message;
-      console.warn('[本地弹幕]', m.message);
+  function hasId(dx, id) {
+    const map = dx.manager && dx.manager.dmidMap;
+    if (!map) return null; // 无法验证
+    return map instanceof Map ? map.has(id) : id in map;
+  }
+
+  function isInjected(dx) {
+    if (!list.length) return true;
+    return hasId(dx, list[0].dmid) !== false && dx.__ldInjected === list;
+  }
+
+  function inject(dx) {
+    if (injecting) return;
+    injecting = true;
+    try {
+      const items = list.map(toPlayerItem);
+      for (let i = 0; i < items.length; i += CHUNK) dx.addList(items.slice(i, i + CHUNK));
+      dx.__ldInjected = list;
+      const verified = hasId(dx, items[0] && items[0].dmid);
+      status = verified === false
+        ? '本地弹幕: 已调用注入但引擎未登记，可能接口已变化'
+        : `本地弹幕: 已交给B站弹幕引擎 ${items.length}条${skipped ? `（跳过高级弹幕${skipped}条）` : ''}`;
+      console.info('[本地弹幕] 已通过 addList 注入', items.length, '条，登记检查:', verified);
+    } catch (e) {
+      status = '本地弹幕: 注入失败，见控制台';
+      console.warn('[本地弹幕] addList 注入失败', e);
+    } finally {
+      injecting = false;
     }
   }
-  try {
-    new BroadcastChannel(CHANNEL).onmessage = (e) => e.data && onReport(e.data);
-  } catch (e) {
-    // 不支持时只能看到主线程的状态
-  }
 
-  console.info('[本地弹幕] 脚本已启动，页面:', location.href);
-  const mainCore = core(onReport);
-
-  // ---------- Worker 注入 ----------
-  // 导入过弹幕才注入，避免影响页面上无关的 Worker
-  let enabled = false;
-  try {
-    enabled = localStorage.getItem(FLAG) === '1';
-  } catch (e) {
-    // 无法读取时不注入 Worker
-  }
-  function wrapWorkerConstructor(name) {
-    const Native = window[name];
-    if (!enabled || typeof Native !== 'function') return;
-    const workerReport =
-      'function (m) { try { (self.__ldBc || (self.__ldBc = new BroadcastChannel(' +
-      JSON.stringify(CHANNEL) + '))).postMessage(m); } catch (e) {} }';
-    const hookSrc = `(${core.toString()})(${workerReport});`;
-    const hookUrl = URL.createObjectURL(new Blob([hookSrc], { type: 'text/javascript' }));
-    window[name] = new Proxy(Native, {
-      construct(Target, args, newTarget) {
-        try {
-          const abs = new URL(args[0], location.href).href;
-          const isModule = args[1] && args[1].type === 'module';
-          const code = isModule
-            ? `import ${JSON.stringify(hookUrl)};\nimport ${JSON.stringify(abs)};`
-            : `importScripts(${JSON.stringify(hookUrl)}, ${JSON.stringify(abs)});`;
-          const wrapped = URL.createObjectURL(new Blob([code], { type: 'text/javascript' }));
-          stats.created++;
-          console.info(`[本地弹幕] 已向 ${name} 注入拦截:`, abs);
-          args = [wrapped, args[1]];
-        } catch (e) {
-          console.warn(`[本地弹幕] ${name} 包装失败，保持原样`, e);
-        }
-        return Reflect.construct(Target, args, newTarget);
-      },
-    });
-  }
-  wrapWorkerConstructor('Worker');
-  wrapWorkerConstructor('SharedWorker');
-
-  // ---------- 诊断：页面实际发出的疑似弹幕请求（主线程可见的部分） ----------
-  const dmUrls = [];
-  try {
-    new PerformanceObserver((list) => {
-      for (const e of list.getEntries()) {
-        if (/dm|danmaku|danmu|seg\.so/i.test(e.name) && dmUrls.length < 20) {
-          dmUrls.push(e.name.replace(/\?.*/, ''));
-          console.info('[本地弹幕] 发现疑似弹幕请求:', e.name, e.initiatorType);
-        }
-      }
-    }).observe({ type: 'resource', buffered: true });
-  } catch (e) {
-    // 不支持时忽略
+  // 切换视频/分P后引擎会重建或清空；每秒检查一次，缺失时补注入
+  function tick() {
+    if (!list.length) return;
+    const dx = getEngine();
+    if (!dx) {
+      status = '本地弹幕: 等待播放器弹幕引擎';
+      return;
+    }
+    if (dx !== engine || !isInjected(dx)) {
+      engine = dx;
+      inject(dx);
+    }
   }
 
   // ---------- 持久化 ----------
@@ -372,41 +158,15 @@
     });
   }
 
-  function parseXml(text) {
-    const doc = new DOMParser().parseFromString(text, 'text/xml');
-    const list = [];
-    doc.querySelectorAll('d').forEach((el) => {
-      const p = (el.getAttribute('p') || '').split(',');
-      const t = parseFloat(p[0]);
-      if (isNaN(t)) return;
-      const color = parseInt(p[3], 10);
-      list.push({
-        t: Math.round(t * 1000),
-        mode: parseInt(p[1], 10) || 1,
-        size: parseInt(p[2], 10) || 25,
-        color: Number.isNaN(color) ? 0xffffff : color,
-        ctime: parseInt(p[4], 10) || 0,
-        pool: parseInt(p[5], 10) || 0,
-        text: el.textContent,
-      });
-    });
-    list.sort((a, b) => a.t - b.t);
-    return list;
+  function setData(parsed) {
+    list = parsed.list;
+    skipped = parsed.skipped;
+    list.forEach((d, i) => (d.dmid = String(ID_BASE + BigInt(i))));
+    engine = null;
+    status = list.length ? `本地弹幕: ${list.length}条，等待注入` : '导入本地弹幕XML';
   }
 
   // ---------- 导入入口 ----------
-  function statusText() {
-    const count = mainCore.count();
-    if (!count) return '导入本地弹幕XML';
-    if (stats.merged) return `本地弹幕: 已注入${stats.added}条`;
-    if (stats.incompatible) return '本地弹幕: 格式不符，未注入';
-    if (stats.seen) return `本地弹幕: ${count}条，已拦截弹幕请求但当前分段无弹幕`;
-    if (!enabled) return '本地弹幕: 请重新导入一次以启用';
-    if (dmUrls.length && !stats.created) return '本地弹幕: 页面 Worker 未被脚本拦截';
-    if (stats.created && !stats.workers) return '本地弹幕: Worker 已包装但未确认启动';
-    return `本地弹幕: ${count}条，等待弹幕请求`;
-  }
-
   function createUI() {
     const input = document.createElement('input');
     input.type = 'file';
@@ -418,14 +178,6 @@
       'position:fixed;right:10px;bottom:80px;z-index:99999;background:#00a1d6;color:#fff;' +
       'padding:6px 10px;border-radius:6px;font-size:13px;cursor:pointer;user-select:none;opacity:.85;';
     const label = document.createElement('span');
-    const refreshLabel = () => {
-      label.textContent = statusText();
-      label.title =
-        stats.error ||
-        `请求 ${stats.seen} 次，页面主线程创建 Worker ${stats.created} 个，Worker 确认启动 ${stats.workers} 个；` +
-          (stats.urls.length ? `请求: ${stats.urls.join(' | ')}` : '');
-    };
-    setInterval(refreshLabel, 1000);
     label.onclick = () => input.click();
     const clear = document.createElement('span');
     clear.textContent = ' [清除]';
@@ -433,32 +185,40 @@
     clear.onclick = async (e) => {
       e.stopPropagation();
       await dbOp('readwrite', (s) => s.delete('current'));
-      try {
-        localStorage.removeItem(FLAG);
-      } catch (err) {
-        // 忽略
-      }
-      location.reload();
+      location.reload(); // 原生引擎不提供按条移除的公开接口，刷新页面最稳妥
     };
     btn.append(label, clear);
 
     input.onchange = async () => {
       const file = input.files[0];
       if (!file) return;
-      const list = parseXml(await file.text());
-      await dbOp('readwrite', (s) => s.put({ name: file.name, list }, 'current'));
-      try {
-        localStorage.setItem(FLAG, '1');
-      } catch (err) {
-        // 忽略
+      const parsed = parseXml(await file.text());
+      await dbOp('readwrite', (s) => s.put({ name: file.name, ...parsed }, 'current'));
+      if (engine) {
+        location.reload(); // 已注入过旧文件时刷新，避免新旧弹幕叠加
+        return;
       }
-      location.reload(); // 重新请求弹幕分段，由原生系统载入
+      setData(parsed);
     };
 
     document.body.append(input, btn);
-    mainCore.ready.then(refreshLabel);
+    setInterval(() => {
+      tick();
+      label.textContent = status;
+    }, 1000);
+    label.textContent = status;
   }
 
-  if (document.body) createUI();
-  else document.addEventListener('DOMContentLoaded', createUI);
+  async function init() {
+    try {
+      const saved = await dbOp('readonly', (s) => s.get('current'));
+      if (saved && Array.isArray(saved.list)) setData(saved);
+    } catch (e) {
+      // 无法读取时保持空列表
+    }
+    createUI();
+  }
+
+  console.info('[本地弹幕] 脚本已启动（原生引擎模式）');
+  init();
 })();

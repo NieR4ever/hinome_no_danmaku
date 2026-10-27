@@ -451,10 +451,19 @@
       const panelWidth = settingsPanel.offsetWidth;
       const minLeft = Math.max(8, bounds.left + 8);
       const maxLeft = Math.min(window.innerWidth - panelWidth - 8, bounds.right - panelWidth - 8);
-      const left = Math.max(minLeft, Math.min(
-        buttonBounds.left + buttonBounds.width / 2 - panelWidth / 2,
-        maxLeft
-      ));
+      const gap = 6;
+      const preferRight = placedKey === 'player:mid-left';
+      const rightSideLeft = buttonBounds.right + gap;
+      const leftSideLeft = buttonBounds.left - panelWidth - gap;
+      const fitsRight = rightSideLeft <= maxLeft;
+      const fitsLeft = leftSideLeft >= minLeft;
+      const left = preferRight && fitsRight
+        ? rightSideLeft
+        : !preferRight && fitsLeft
+          ? leftSideLeft
+          : fitsRight
+            ? rightSideLeft
+            : Math.max(minLeft, Math.min(leftSideLeft, maxLeft));
       const minTop = Math.max(8, bounds.top + 8);
       const maxBottom = Math.min(window.innerHeight - 8, bounds.bottom - 8);
       settingsPanel.style.maxHeight = `${Math.max(0, maxBottom - minTop)}px`;

@@ -443,6 +443,23 @@
     if (!panelOpen) return;
     const host = uiRoot.parentElement;
     const inPlayer = host && placedKey.startsWith('player');
+    if (placedKey === 'list') {
+      const buttonBounds = btn.getBoundingClientRect();
+      const rootBounds = uiRoot.getBoundingClientRect();
+      const panelWidth = settingsPanel.offsetWidth;
+      const left = Math.max(8, Math.min(
+        buttonBounds.left,
+        window.innerWidth - panelWidth - 8
+      ));
+      const top = buttonBounds.bottom + 6;
+      settingsPanel.style.left = `${left - rootBounds.left}px`;
+      settingsPanel.style.right = 'auto';
+      settingsPanel.style.top = `${top - rootBounds.top}px`;
+      settingsPanel.style.transform = 'none';
+      settingsPanel.style.maxHeight =
+        `${Math.max(0, window.innerHeight - Math.max(8, top) - 8)}px`;
+      return;
+    }
     if (inPlayer && placedKey.startsWith('player:mid-')) {
       const bounds = host.getBoundingClientRect();
       const buttonBounds = btn.getBoundingClientRect();

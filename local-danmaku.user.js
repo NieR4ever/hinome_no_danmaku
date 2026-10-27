@@ -622,7 +622,7 @@
     back.style.cssText = 'cursor:pointer;color:#00a1d6;';
     const hint = document.createElement('div');
     hint.textContent = '每行一个屏蔽词，不区分大小写；/正则/ 形式按正则匹配。';
-    hint.style.cssText = 'color:#aaa;';
+    hint.style.cssText = 'color:#aaa;white-space:normal;overflow-wrap:anywhere;word-break:break-word;min-width:0;';
     const area = document.createElement('textarea');
     area.value = blockWords.join('\n');
     area.rows = 8;
@@ -685,7 +685,7 @@
       'display:none;gap:6px;position:absolute;top:calc(100% + 6px);z-index:2147483001;width:220px;' +
       'max-height:70vh;overflow:auto;overscroll-behavior:contain;box-sizing:border-box;padding:12px;pointer-events:auto;' +
       'background:rgba(20,20,20,.94);color:#fff;border-radius:6px;' +
-      'font-size:12px;line-height:1.4;cursor:default;text-align:left;';
+      'font-size:12px;line-height:1.4;cursor:default;text-align:left;white-space:normal;';
 
     const info = document.createElement('div');
     info.style.cssText = 'display:flex;justify-content:space-between;align-items:center;gap:8px;';

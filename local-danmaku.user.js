@@ -45,6 +45,36 @@
     } catch (e) { /* 忽略存储失败 */ }
   }
 
+  const WORDS_KEY = 'local-danmaku-block-words';
+  let blockWords = [];
+  try {
+    const w = JSON.parse(localStorage.getItem(WORDS_KEY) || '[]');
+    if (Array.isArray(w)) blockWords = w.filter((x) => typeof x === 'string');
+  } catch (e) { /* 忽略损坏的配置 */ }
+  let blockMatchers = [];
+  // 每行一个屏蔽词（不区分大小写）；形如 /正则/ 的行按正则匹配
+  function compileBlockWords() {
+    blockMatchers = [];
+    blockWords.forEach((line) => {
+      const w = line.trim();
+      if (!w) return;
+      const m = /^\/(.+)\/([gimsuy]*)$/.exec(w);
+      if (m) {
+        try {
+          const re = new RegExp(m[1], m[2].replace('g', '').replace('y', ''));
+          blockMatchers.push((t) => re.test(t));
+          return;
+        } catch (e) { /* 非法正则按普通文本处理 */ }
+      }
+      const lower = w.toLowerCase();
+      blockMatchers.push((t) => t.toLowerCase().includes(lower));
+    });
+  }
+  function hasBlockedWord(text) {
+    return blockMatchers.some((f) => f(text));
+  }
+  compileBlockWords();
+
   let danmakus = []; // {t, mode, size, color, text}
   let layer = null;
   let video = null;
@@ -340,7 +370,7 @@
       const d = danmakus[idx];
       const position = d.mode === 5 ? 'top' : d.mode === 4 ? 'bottom' : 'scroll';
       const colorful = (d.color & 0xffffff) !== 0xffffff;
-      if (!isBlocked(position, colorful) && t - d.t < 1.5 && count < 30) {
+      if (!isBlocked(position, colorful) && !hasBlockedWord(d.text) && t - d.t < 1.5 && count < 30) {
         emit(d);
         count++;
       }
@@ -559,6 +589,68 @@
     settingsPanel.appendChild(row);
   }
 
+  // 二级菜单：把主面板内容收进 mainView，屏蔽词编辑放到 subView
+  function buildBlockWordsMenu() {
+    const mainView = document.createElement('div');
+    mainView.style.cssText = 'display:grid;gap:6px;';
+    while (settingsPanel.firstChild) mainView.appendChild(settingsPanel.firstChild);
+
+    const entry = document.createElement('div');
+    entry.style.cssText =
+      'display:flex;justify-content:space-between;align-items:center;cursor:pointer;' +
+      'margin-top:4px;padding-top:6px;border-top:1px solid #555;';
+    const entryCount = document.createElement('span');
+    const entryTitle = document.createElement('span');
+    entryTitle.textContent = '屏蔽词';
+    const arrow = document.createElement('span');
+    arrow.append(entryCount, ' ›');
+    entry.append(entryTitle, arrow);
+    const updateCount = () => {
+      const n = blockWords.filter((x) => x.trim()).length;
+      entryCount.textContent = n ? `${n}个` : '';
+    };
+    updateCount();
+    mainView.appendChild(entry);
+
+    const subView = document.createElement('div');
+    subView.style.cssText = 'display:none;gap:6px;';
+    const back = document.createElement('div');
+    back.textContent = '‹ 屏蔽词';
+    back.style.cssText = 'cursor:pointer;color:#00a1d6;';
+    const hint = document.createElement('div');
+    hint.textContent = '每行一个屏蔽词，不区分大小写；/正则/ 形式按正则匹配。';
+    hint.style.cssText = 'color:#aaa;';
+    const area = document.createElement('textarea');
+    area.value = blockWords.join('\n');
+    area.rows = 8;
+    area.spellcheck = false;
+    area.style.cssText =
+      'width:100%;box-sizing:border-box;resize:vertical;background:#333;color:#fff;' +
+      'border:1px solid #666;border-radius:4px;padding:4px;font-size:12px;';
+    const apply = () => {
+      blockWords = area.value.split('\n').map((x) => x.trim()).filter(Boolean);
+      try { localStorage.setItem(WORDS_KEY, JSON.stringify(blockWords)); } catch (e) { /* 忽略存储失败 */ }
+      compileBlockWords();
+      updateCount();
+      if (layer) {
+        Array.from(layer.children).forEach((el) => {
+          if (hasBlockedWord(el.textContent)) el.remove();
+        });
+      }
+    };
+    area.addEventListener('input', apply);
+    subView.append(back, hint, area);
+
+    const show = (sub) => {
+      mainView.style.display = sub ? 'none' : 'grid';
+      subView.style.display = sub ? 'grid' : 'none';
+      fitPanel();
+    };
+    entry.onclick = () => show(true);
+    back.onclick = () => show(false);
+    settingsPanel.append(mainView, subView);
+  }
+
   function createUI() {
     const input = document.createElement('input');
     input.type = 'file';
@@ -644,6 +736,7 @@
     addSettingToggle('顶部', 'blockTop');
     addSettingToggle('底部', 'blockBottom');
     addSettingToggle('彩色', 'blockColorful');
+    buildBlockWordsMenu();
     // 面板上的滚轮只滚动面板本身，不影响页面和播放器音量
     settingsPanel.addEventListener('wheel', (e) => {
       e.preventDefault();

@@ -148,7 +148,9 @@
       key = `player:${pos}`;
       apply = () => {
         uiRoot.style.cssText = `position:absolute;z-index:80;${PLAYER_POS_CSS[pos]}`;
-        panelAlign(pos === 'top' ? 'center' : pos.endsWith('left') ? 'left' : 'right');
+        panelAlign(pos === 'top' || pos.startsWith('mid-')
+          ? 'center'
+          : pos.endsWith('left') ? 'left' : 'right');
       };
       if (uiRoot.parentElement !== player) {
         if (getComputedStyle(player).position === 'static') player.style.position = 'relative';
@@ -443,6 +445,20 @@
     if (!panelOpen) return;
     const host = uiRoot.parentElement;
     const inPlayer = host && placedKey.startsWith('player');
+    if (inPlayer && placedKey.startsWith('player:mid-')) {
+      const bounds = host.getBoundingClientRect();
+      const buttonBounds = btn.getBoundingClientRect();
+      const panelWidth = settingsPanel.offsetWidth;
+      const minLeft = Math.max(8, bounds.left + 8);
+      const maxLeft = Math.min(window.innerWidth - panelWidth - 8, bounds.right - panelWidth - 8);
+      const left = Math.max(minLeft, Math.min(
+        buttonBounds.left + buttonBounds.width / 2 - panelWidth / 2,
+        maxLeft
+      ));
+      settingsPanel.style.left = `${left - uiRoot.getBoundingClientRect().left}px`;
+      settingsPanel.style.right = 'auto';
+      settingsPanel.style.transform = 'none';
+    }
     const limit = inPlayer ? host.getBoundingClientRect().bottom : window.innerHeight;
     const top = settingsPanel.getBoundingClientRect().top;
     settingsPanel.style.maxHeight = `${Math.max(120, Math.min(limit, window.innerHeight) - top - 8)}px`;

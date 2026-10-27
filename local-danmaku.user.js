@@ -621,7 +621,7 @@
     back.textContent = '‹ 屏蔽词';
     back.style.cssText = 'cursor:pointer;color:#00a1d6;';
     const hint = document.createElement('div');
-    hint.textContent = '每行一个屏蔽词，不区分大小写；/正则/ 形式按正则匹配。';
+    hint.textContent = '每行一个屏蔽词，不区分大小写；/正则/ 形式按正则匹配。点击“应用”后生效并保存。';
     hint.style.cssText = 'color:#aaa;white-space:normal;overflow-wrap:anywhere;word-break:break-word;min-width:0;';
     const area = document.createElement('textarea');
     area.value = blockWords.join('\n');
@@ -641,17 +641,29 @@
         });
       }
     };
-    area.addEventListener('input', apply);
-    subView.append(back, hint, area);
+    const applyBtn = document.createElement('div');
+    applyBtn.textContent = '应用';
+    applyBtn.style.cssText =
+      'justify-self:end;padding:3px 16px;background:#00a1d6;color:#fff;border-radius:4px;' +
+      'cursor:pointer;user-select:none;';
+    applyBtn.onclick = () => {
+      apply();
+      applyBtn.textContent = '已应用';
+      setTimeout(() => { applyBtn.textContent = '应用'; }, 1000);
+    };
+    subView.append(back, hint, area, applyBtn);
 
     const show = (sub) => {
       mainView.style.display = sub ? 'none' : 'grid';
       subView.style.display = sub ? 'grid' : 'none';
       fitPanel();
     };
-    showMainMenu = () => show(false);
+    showMainMenu = () => {
+      area.value = blockWords.join('\n'); // 未应用的修改不保留
+      show(false);
+    };
     entry.onclick = () => show(true);
-    back.onclick = () => show(false);
+    back.onclick = () => showMainMenu();
     settingsPanel.append(mainView, subView);
   }
 

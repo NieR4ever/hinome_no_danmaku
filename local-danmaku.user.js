@@ -82,6 +82,38 @@
     return document.querySelector('.bpx-player-video-wrap video, #bilibiliPlayer video, video');
   }
 
+  function positionUI() {
+    if (!uiRoot) return;
+
+    video = findVideo();
+    const player = video
+      ? video.closest('.bpx-player-container, #bilibiliPlayer, .bpx-player-video-area')
+      : document.querySelector('.bpx-player-container, #bilibiliPlayer');
+    if (player) {
+      if (getComputedStyle(player).position === 'static') player.style.position = 'relative';
+      uiRoot.style.cssText =
+        'position:absolute;top:10px;right:10px;z-index:80;pointer-events:auto;';
+      if (uiRoot.parentElement !== player) player.appendChild(uiRoot);
+      return;
+    }
+
+    const danmakuList = document.querySelector(
+      '.bpx-player-dm-wrap, .bpx-player-dm-list, .bpx-player-dm'
+    );
+    if (danmakuList && danmakuList.parentElement) {
+      uiRoot.style.cssText =
+        'position:relative;z-index:80;width:max-content;max-width:100%;margin:8px 0;' +
+        'pointer-events:auto;';
+      if (uiRoot.parentElement !== danmakuList.parentElement ||
+          uiRoot.nextElementSibling !== danmakuList) {
+        danmakuList.parentElement.insertBefore(uiRoot, danmakuList);
+      }
+      return;
+    }
+
+    uiRoot.style.cssText = 'position:relative;z-index:80;margin:8px;pointer-events:auto;';
+  }
+
   function ensureLayer() {
     video = findVideo();
     if (!video) return false;
@@ -243,9 +275,11 @@
     setBtn(`本地弹幕: ${danmakus.length}条`);
   }
 
+  let uiRoot;
   let btn;
+  let btnLabel;
   let settingsPanel;
-  function setBtn(t) { if (btn) btn.firstChild.textContent = t; }
+  function setBtn(t) { if (btnLabel) btnLabel.textContent = t; }
 
   function updateSettingsLabels() {
     settingsPanel.querySelectorAll('input[type="range"]').forEach((input) => {
@@ -286,14 +320,18 @@
     input.style.display = 'none';
     input.onchange = () => input.files[0] && loadFile(input.files[0]);
 
+    uiRoot = document.createElement('div');
+    uiRoot.id = 'local-danmaku-controls';
+    uiRoot.style.cssText = 'position:relative;z-index:80;margin:8px;pointer-events:auto;';
+
     btn = document.createElement('div');
     btn.style.cssText =
-      'position:fixed;right:10px;bottom:80px;z-index:99999;background:#00a1d6;color:#fff;' +
+      'display:inline-block;background:#00a1d6;color:#fff;' +
       'padding:6px 10px;border-radius:6px;font-size:13px;cursor:pointer;user-select:none;opacity:.85;';
-    const label = document.createElement('span');
-    label.textContent = '导入本地弹幕XML';
-    label.onclick = () => input.click();
-    btn.appendChild(label);
+    btnLabel = document.createElement('span');
+    btnLabel.textContent = '导入本地弹幕XML';
+    btnLabel.onclick = () => input.click();
+    btn.appendChild(btnLabel);
 
     const toggle = document.createElement('span');
     toggle.textContent = ' [开]';
@@ -313,8 +351,9 @@
     settingsToggle.style.marginLeft = '6px';
     settingsPanel = document.createElement('div');
     settingsPanel.style.cssText =
-      'display:none;position:fixed;right:10px;bottom:112px;z-index:99999;width:220px;' +
-      'padding:12px;background:rgba(20,20,20,.94);color:#fff;border-radius:6px;' +
+      'display:none;position:absolute;top:calc(100% + 6px);right:0;z-index:81;width:220px;' +
+      'max-height:80vh;overflow:auto;box-sizing:border-box;padding:12px;' +
+      'background:rgba(20,20,20,.94);color:#fff;border-radius:6px;' +
       'font-size:12px;line-height:1.4;cursor:default;';
     addSettingRow('显示区域', 'displayArea', 25, 100, 25);
     addSettingRow('不透明度', 'opacity', 10, 100, 5);
@@ -334,9 +373,12 @@
       settingsPanel.style.display = settingsPanel.style.display === 'none' ? 'grid' : 'none';
     };
     btn.appendChild(settingsToggle);
-    document.body.append(input, btn);
-    document.body.appendChild(settingsPanel);
+    uiRoot.append(input, btn, settingsPanel);
+    document.body.appendChild(uiRoot);
+    positionUI();
     updateSettingsLabels();
+
+    new MutationObserver(positionUI).observe(document.body, { childList: true, subtree: true });
   }
 
   createUI();

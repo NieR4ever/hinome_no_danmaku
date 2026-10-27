@@ -1,11 +1,13 @@
 // ==UserScript==
 // @name         B站本地弹幕XML注入（原生弹幕系统）
 // @namespace    hinome_no_danmaku_inject
-// @version      1.1.0
+// @version      1.2.0
 // @description  读取本地弹幕 XML（录播姬/B站格式），合并进B站弹幕分段响应（含 Web Worker 内的请求），由B站原生弹幕渲染、弹幕列表、屏蔽与设置接管
 // @match        https://www.bilibili.com/video/*
 // @match        https://www.bilibili.com/list/*
 // @grant        none
+// @sandbox      MAIN
+// @inject-into   page
 // @run-at       document-start
 // ==/UserScript==
 
@@ -270,7 +272,7 @@
   }
 
   // ---------- 状态统计（主线程与 Worker 的上报汇总） ----------
-  const stats = { seen: 0, merged: 0, added: 0, incompatible: 0, workers: 0, error: '', urls: [] };
+  const stats = { seen: 0, merged: 0, added: 0, incompatible: 0, workers: 0, created: 0, error: '', urls: [] };
   function onReport(m) {
     if (m.type === 'hello' && m.worker) stats.workers++;
     else if (m.type === 'seen') {
@@ -305,13 +307,15 @@
   } catch (e) {
     // 无法读取时不注入 Worker
   }
-  if (enabled && window.Worker) {
+  function wrapWorkerConstructor(name) {
+    const Native = window[name];
+    if (!enabled || typeof Native !== 'function') return;
     const workerReport =
       'function (m) { try { (self.__ldBc || (self.__ldBc = new BroadcastChannel(' +
       JSON.stringify(CHANNEL) + '))).postMessage(m); } catch (e) {} }';
     const hookSrc = `(${core.toString()})(${workerReport});`;
     const hookUrl = URL.createObjectURL(new Blob([hookSrc], { type: 'text/javascript' }));
-    window.Worker = new Proxy(window.Worker, {
+    window[name] = new Proxy(Native, {
       construct(Target, args, newTarget) {
         try {
           const abs = new URL(args[0], location.href).href;
@@ -320,15 +324,18 @@
             ? `import ${JSON.stringify(hookUrl)};\nimport ${JSON.stringify(abs)};`
             : `importScripts(${JSON.stringify(hookUrl)}, ${JSON.stringify(abs)});`;
           const wrapped = URL.createObjectURL(new Blob([code], { type: 'text/javascript' }));
-          console.info('[本地弹幕] 已向 Worker 注入拦截:', abs);
+          stats.created++;
+          console.info(`[本地弹幕] 已向 ${name} 注入拦截:`, abs);
           args = [wrapped, args[1]];
         } catch (e) {
-          console.warn('[本地弹幕] Worker 包装失败，保持原样', e);
+          console.warn(`[本地弹幕] ${name} 包装失败，保持原样`, e);
         }
         return Reflect.construct(Target, args, newTarget);
       },
     });
   }
+  wrapWorkerConstructor('Worker');
+  wrapWorkerConstructor('SharedWorker');
 
   // ---------- 诊断：页面实际发出的疑似弹幕请求（主线程可见的部分） ----------
   const dmUrls = [];
@@ -394,8 +401,9 @@
     if (stats.merged) return `本地弹幕: 已注入${stats.added}条`;
     if (stats.incompatible) return '本地弹幕: 格式不符，未注入';
     if (stats.seen) return `本地弹幕: ${count}条，已拦截弹幕请求但当前分段无弹幕`;
-    if (!enabled) return '本地弹幕: 请刷新页面以启用';
-    if (dmUrls.length && !stats.workers) return '本地弹幕: 弹幕请求未被拦截';
+    if (!enabled) return '本地弹幕: 请重新导入一次以启用';
+    if (dmUrls.length && !stats.created) return '本地弹幕: 页面 Worker 未被脚本拦截';
+    if (stats.created && !stats.workers) return '本地弹幕: Worker 已包装但未确认启动';
     return `本地弹幕: ${count}条，等待弹幕请求`;
   }
 
@@ -414,7 +422,7 @@
       label.textContent = statusText();
       label.title =
         stats.error ||
-        `拦截到弹幕请求 ${stats.seen} 次，已注入Worker ${stats.workers} 个；` +
+        `请求 ${stats.seen} 次，页面主线程创建 Worker ${stats.created} 个，Worker 确认启动 ${stats.workers} 个；` +
           (stats.urls.length ? `请求: ${stats.urls.join(' | ')}` : '');
     };
     setInterval(refreshLabel, 1000);

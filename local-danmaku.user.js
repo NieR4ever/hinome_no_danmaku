@@ -25,6 +25,7 @@
     blockTop: false,
     blockBottom: false,
     blockColorful: false,
+    offset: 0, // 弹幕偏移(秒)，正数为延后
     uiVisibility: 'always', // always | hover
     uiPosition: 'top-right', // top | top-left | top-right | mid-left | mid-right | list
   };
@@ -243,6 +244,11 @@
     lastTime = t;
   }
 
+  // 应用偏移后的弹幕时间轴
+  function danmakuTime() {
+    return video.currentTime - settings.offset;
+  }
+
   function pickLane(arr, now, laneHeight, maxLanes, busyUntil) {
     for (let i = 0; i < maxLanes; i++) {
       if (!arr[i] || arr[i] <= now) {
@@ -325,7 +331,7 @@
     rafId = requestAnimationFrame(tick);
     if (!enabled || !danmakus.length || !ensureLayer()) return;
     if (layer.style.display === 'none') return;
-    const t = video.currentTime;
+    const t = danmakuTime();
     if (Math.abs(t - lastTime) > 1.5 || t < lastTime - 0.1) seekTo(t);
     if (video.paused) return;
     let count = 0;
@@ -348,7 +354,7 @@
     v._ldBound = true;
     v.addEventListener('pause', () => setPaused(true));
     v.addEventListener('play', () => setPaused(false));
-    v.addEventListener('seeking', () => seekTo(v.currentTime));
+    v.addEventListener('seeking', () => seekTo(danmakuTime()));
     v.addEventListener('emptied', clearScreen);
   }
 
@@ -357,7 +363,7 @@
     danmakus = parseXml(text);
     if (!ensureLayer()) return alert('未找到视频播放器');
     bindVideoEvents();
-    seekTo(video.currentTime);
+    seekTo(danmakuTime());
     if (!rafId) tick();
     setBtn(`本地弹幕: ${danmakus.length}条`);
   }
@@ -400,7 +406,7 @@
   }
 
   function updateSettingsLabels() {
-    settingsPanel.querySelectorAll('input[type="range"]').forEach((input) => {
+    settingsPanel.querySelectorAll('input[type="range"][data-setting]').forEach((input) => {
       const output = input.parentElement.querySelector('output');
       const value = settings[input.dataset.setting];
       output.textContent = input.dataset.setting === 'speed'
@@ -441,6 +447,53 @@
     panelOpen = false;
     settingsPanel.style.display = 'none';
     refreshVisibility();
+  }
+
+  function addOffsetRow() {
+    const row = document.createElement('div');
+    row.style.cssText = 'display:grid;grid-template-columns:1fr auto;gap:4px 8px;align-items:center;';
+    const title = document.createElement('span');
+    title.textContent = '弹幕偏移';
+    const help = document.createElement('span');
+    help.textContent = '?';
+    help.title = '滑块可在 -5 到 5 秒之间调节；需要更大偏移时，在右侧文本框输入秒数后按回车或点击别处。' +
+      '正数表示弹幕延后出现，负数表示提前出现，例如输入 30 或 -12.5。';
+    help.style.cssText =
+      'display:inline-flex;align-items:center;justify-content:center;width:14px;height:14px;' +
+      'margin-left:4px;border:1px solid #aaa;border-radius:50%;font-size:10px;cursor:help;';
+    title.appendChild(help);
+    const box = document.createElement('span');
+    box.style.cssText = 'display:flex;align-items:center;gap:2px;';
+    const text = document.createElement('input');
+    text.type = 'text';
+    text.inputMode = 'decimal';
+    text.style.cssText =
+      'width:52px;background:#333;color:#fff;border:1px solid #666;border-radius:4px;padding:1px 3px;text-align:right;';
+    const unit = document.createElement('span');
+    unit.textContent = 's';
+    box.append(text, unit);
+    const slider = document.createElement('input');
+    slider.type = 'range';
+    slider.min = -5;
+    slider.max = 5;
+    slider.step = 0.1;
+    slider.style.cssText = 'grid-column:1 / -1;width:100%;margin:0;accent-color:#00a1d6;';
+    const sync = () => {
+      text.value = String(Math.round(settings.offset * 100) / 100);
+      slider.value = Math.max(-5, Math.min(5, settings.offset));
+    };
+    const apply = (v) => {
+      if (!Number.isFinite(v)) return sync();
+      settings.offset = v;
+      sync();
+      if (video && danmakus.length) seekTo(danmakuTime());
+    };
+    slider.addEventListener('input', () => apply(Number(slider.value)));
+    text.addEventListener('change', () => apply(parseFloat(text.value)));
+    text.addEventListener('keydown', (e) => { if (e.key === 'Enter') text.blur(); });
+    sync();
+    row.append(title, box, slider);
+    settingsPanel.appendChild(row);
   }
 
   function createUI() {
@@ -514,6 +567,7 @@
     const separator0 = document.createElement('div');
     separator0.style.cssText = 'border-top:1px solid #555;';
     settingsPanel.appendChild(separator0);
+    addOffsetRow();
     addSettingRow('显示区域', 'displayArea', 25, 100, 25);
     addSettingRow('不透明度', 'opacity', 10, 100, 5);
     addSettingRow('弹幕字号', 'fontScale', 50, 200, 10);

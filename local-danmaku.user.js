@@ -84,6 +84,28 @@
   let rafId = 0;
   let lanes = { scroll: [], top: [], bottom: [] };
 
+  // 表情包弹幕：整条内容就是一个 B 站图片 URL，解析时只判断一次
+  const EMOTE_RE = /^https?:\/\/i\d\.hdslb\.com\/bfs\/garb\/[\w]+\.(?:png|webp|gif)$/i;
+  const MAX_EMOTES_ON_SCREEN = 30;
+  const emoteCache = new Map(); // url -> HTMLImageElement
+
+  function preloadEmotes(list) {
+    const urls = [...new Set(list.filter((d) => d.img).map((d) => d.img))];
+    let i = 0;
+    const step = (deadline) => {
+      while (i < urls.length && (!deadline || deadline.timeRemaining() > 2)) {
+        const url = urls[i++];
+        if (emoteCache.has(url)) continue;
+        const img = new Image();
+        img.decoding = 'async';
+        img.src = url;
+        emoteCache.set(url, img);
+      }
+      if (i < urls.length) (window.requestIdleCallback || setTimeout)(step);
+    };
+    (window.requestIdleCallback || setTimeout)(step);
+  }
+
   function parseXml(text) {
     const doc = new DOMParser().parseFromString(text, 'text/xml');
     const list = [];
@@ -92,12 +114,15 @@
       const t = parseFloat(p[0]);
       if (isNaN(t)) return;
       const parsedColor = parseInt(p[3], 10);
+      const content = el.textContent;
+      const trimmed = content.trim();
       list.push({
+        img: EMOTE_RE.test(trimmed) ? trimmed : null,
         t,
         mode: parseInt(p[1], 10) || 1,
         size: parseInt(p[2], 10) || 25,
         color: Number.isNaN(parsedColor) ? 0xffffff : parsedColor,
-        text: el.textContent,
+        text: content,
       });
     });
     list.sort((a, b) => a.t - b.t);
@@ -308,8 +333,20 @@
     const maxLanes = Math.max(1, Math.floor((h * 0.8) / laneH));
     const now = performance.now() / 1000;
 
+    if (d.img && layer.getElementsByTagName('img').length >= MAX_EMOTES_ON_SCREEN) return;
     const el = document.createElement('div');
-    el.textContent = d.text;
+    if (d.img) {
+      // 表情为正方形，宽度可同步确定，无需等待图片加载
+      const img = document.createElement('img');
+      img.src = d.img;
+      img.decoding = 'async';
+      img.draggable = false;
+      img.style.cssText = `display:block;width:${laneH}px;height:${laneH}px;`;
+      img.onerror = () => el.remove();
+      el.appendChild(img);
+    } else {
+      el.textContent = d.text;
+    }
     el.style.cssText =
       `position:absolute;white-space:pre;font-weight:bold;font-family:SimHei,"Microsoft YaHei",sans-serif;` +
       `font-size:${fontSize}px;line-height:${laneH}px;opacity:${settings.opacity / 100};will-change:transform;` +
@@ -392,6 +429,7 @@
   async function loadFile(file) {
     const text = await file.text();
     danmakus = parseXml(text);
+    preloadEmotes(danmakus);
     if (!ensureLayer()) return alert('未找到视频播放器');
     bindVideoEvents();
     seekTo(danmakuTime());

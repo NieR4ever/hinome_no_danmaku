@@ -31,6 +31,7 @@
     blockBottom: false,
     blockColorful: false,
     blockEmoticonOnly: false,
+    mergeDuplicates: false,
     offset: 0, // 弹幕偏移(秒)，正数为延后
     uiVisibility: 'always', // always | hover
     uiPosition: 'top-right', // top | top-left | top-right | mid-left | mid-right | list
@@ -50,7 +51,7 @@
         settings[key] = saved[key];
       }
     }
-    for (const key of ['scaleWithScreen', 'blockScroll', 'blockTop', 'blockBottom', 'blockColorful', 'blockEmoticonOnly']) {
+    for (const key of ['scaleWithScreen', 'blockScroll', 'blockTop', 'blockBottom', 'blockColorful', 'blockEmoticonOnly', 'mergeDuplicates']) {
       if (typeof saved[key] === 'boolean') settings[key] = saved[key];
     }
     if (['always', 'hover'].includes(saved.uiVisibility)) settings.uiVisibility = saved.uiVisibility;
@@ -95,7 +96,8 @@
   }
   compileBlockWords();
 
-  let danmakus = []; // {t, mode, size, color, text}
+  let sourceDanmakus = [];
+  let danmakus = []; // {t, mode, size, color, text, count}
   let emoticons = new Map();
   let emoticonsPromise = null;
   let layer = null;
@@ -206,6 +208,34 @@
     return list;
   }
 
+  function mergeDuplicateDanmakus(list) {
+    const merged = [];
+    const lastByText = new Map();
+    list.forEach((d) => {
+      const previous = lastByText.get(d.text);
+      if (previous && d.t - previous.t <= 5) {
+        previous.count++;
+      } else {
+        const group = { ...d, count: 1 };
+        merged.push(group);
+        lastByText.set(d.text, group);
+      }
+    });
+    return merged;
+  }
+
+  function updateDanmakus() {
+    danmakus = settings.mergeDuplicates
+      ? mergeDuplicateDanmakus(sourceDanmakus)
+      : sourceDanmakus.map((d) => ({ ...d, count: 1 }));
+    if (video && danmakus.length) seekTo(danmakuTime());
+    if (sourceDanmakus.length) setBtn(`本地弹幕: ${sourceDanmakus.length}条`);
+  }
+
+  function duplicateFontSizeIncrease(count) {
+    return Math.min(5, Math.floor(count / 20));
+  }
+
   function addSettingToggle(label, key) {
     const row = document.createElement('label');
     row.style.cssText = 'display:flex;align-items:center;gap:6px;';
@@ -214,6 +244,7 @@
     input.checked = settings[key];
     input.addEventListener('change', () => {
       settings[key] = input.checked;
+      if (key === 'mergeDuplicates') updateDanmakus();
       if (input.checked && layer) {
         layer.querySelectorAll('[data-danmaku-position]').forEach((el) => {
           if (isBlocked(el.dataset.danmakuPosition, el.dataset.danmakuColorful === 'true', el.dataset.danmakuText)) {
@@ -407,13 +438,14 @@
     if (!w || !h) return;
     const playerHeight = layer.parentElement.clientHeight;
     const screenScale = settings.scaleWithScreen ? playerHeight / 600 : 1;
-    const fontSize = Math.max(12, Math.round(d.size * (settings.fontScale / 100) * screenScale * 0.8 + 6));
+    const fontSize = Math.max(12, Math.round(d.size * (settings.fontScale / 100) * screenScale * 0.8 + 6)) +
+      duplicateFontSizeIncrease(d.count || 1);
     const laneH = fontSize + 4;
     const maxLanes = Math.max(1, Math.floor((h * 0.8) / laneH));
     const now = performance.now() / 1000;
 
     const el = document.createElement('div');
-    appendTextWithEmoticons(el, d.text);
+    appendTextWithEmoticons(el, d.count > 1 ? `${d.text}(${d.count})` : d.text);
     el.style.cssText =
       `position:absolute;white-space:pre;font-weight:bold;font-family:SimHei,"Microsoft YaHei",sans-serif;` +
       `font-size:${fontSize}px;line-height:${laneH}px;opacity:${settings.opacity / 100};will-change:transform;` +
@@ -502,7 +534,8 @@
       alert(`${error.message}，将仅解析图片链接。`);
     }
     const text = await file.text();
-    danmakus = parseXml(text);
+    sourceDanmakus = parseXml(text);
+    updateDanmakus();
     if (!ensureLayer()) return alert('未找到视频播放器');
     bindVideoEvents();
     seekTo(danmakuTime());
@@ -865,6 +898,7 @@
     addSettingRow('弹幕字号', 'fontScale', 50, 200, 10);
     addSettingRow('弹幕速度', 'speed', 50, 200, 10);
     addSettingToggle('弹幕随屏幕缩放', 'scaleWithScreen');
+    addSettingToggle('合并5秒内的重复弹幕', 'mergeDuplicates');
     const separator = document.createElement('div');
     separator.textContent = '屏蔽弹幕';
     separator.style.cssText = 'margin-top:4px;padding-top:6px;border-top:1px solid #555;';

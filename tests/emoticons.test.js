@@ -8,7 +8,8 @@ const root = path.join(__dirname, '..');
 const source = fs.readFileSync(path.join(root, 'local-danmaku.user.js'), 'utf8')
   .replace('  createUI();\n})();', `  globalThis.testApi = {
     loadEmoticons, appendTextWithEmoticons, isEmoticonOnly, isBlocked, addSettingToggle,
-    settings, setLayer: (value) => { layer = value; }, setPanel: (value) => { settingsPanel = value; }
+    mergeDuplicateDanmakus, duplicateFontSizeIncrease, settings,
+    setLayer: (value) => { layer = value; }, setPanel: (value) => { settingsPanel = value; }
   };\n})();`);
 const entries = JSON.parse(fs.readFileSync(path.join(root, 'emoticons.json'), 'utf8'));
 
@@ -123,4 +124,32 @@ test('pure emoticon filter restores, saves and immediately removes matching visi
   input.change();
   assert.equal(api.isBlocked('scroll', false, '[dog]'), false);
   assert.equal(JSON.parse(api.storage['local-danmaku-ui']).blockEmoticonOnly, false);
+});
+
+test('duplicate danmaku merge within five seconds from the first occurrence', () => {
+  const api = setup();
+  const merged = api.mergeDuplicateDanmakus([
+    { t: 1, text: '来了来了', mode: 1, size: 25, color: 0xffffff },
+    { t: 2, text: '别的弹幕', mode: 1, size: 25, color: 0xffffff },
+    { t: 5.9, text: '来了来了', mode: 1, size: 25, color: 0xffffff },
+    { t: 6.01, text: '来了来了', mode: 1, size: 25, color: 0xffffff },
+  ]);
+  assert.deepEqual(JSON.parse(JSON.stringify(merged.map(({ t, text, count }) => [t, text, count]))), [
+    [1, '来了来了', 2],
+    [2, '别的弹幕', 1],
+    [6.01, '来了来了', 1],
+  ]);
+  assert.deepEqual([19, 20, 40, 100, 120].map(api.duplicateFontSizeIncrease), [0, 1, 2, 5, 5]);
+});
+
+test('duplicate merge setting restores and saves its value', () => {
+  const restored = setup(entries, { mergeDuplicates: true });
+  let row;
+  restored.setPanel({ appendChild: (element) => { row = element; } });
+  restored.addSettingToggle('合并5秒内的重复弹幕', 'mergeDuplicates');
+  const input = row.children[0];
+  assert.equal(input.checked, true);
+  input.checked = false;
+  input.change();
+  assert.equal(JSON.parse(restored.storage['local-danmaku-ui']).mergeDuplicates, false);
 });

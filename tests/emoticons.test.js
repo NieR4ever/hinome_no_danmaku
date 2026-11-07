@@ -8,11 +8,22 @@ const root = path.join(__dirname, '..');
 const source = fs.readFileSync(path.join(root, 'local-danmaku.user.js'), 'utf8')
   .replace('  createUI();\n})();', `  globalThis.testApi = {
     loadEmoticons, appendTextWithEmoticons, isEmoticonOnly, isBlocked, addSettingToggle,
+    loadFile, showNotice, refreshVisibility, startEmoticonsLoading,
+    setPlayback: (hooks) => {
+      parseXml = hooks.parseXml; ensureLayer = hooks.ensureLayer;
+      bindVideoEvents = hooks.bindVideoEvents; seekTo = hooks.seekTo; tick = hooks.tick;
+      video = { currentTime: 0 };
+    },
+    setUI: (root, button, panel, open, key = '') => {
+      uiRoot = root; btn = button; settingsPanel = panel; panelOpen = open;
+      placedKey = key;
+    },
+    getNotice: () => notice,
     settings, setLayer: (value) => { layer = value; }, setPanel: (value) => { settingsPanel = value; }
   };\n})();`);
 const entries = JSON.parse(fs.readFileSync(path.join(root, 'emoticons.json'), 'utf8'));
 
-function setup(responseEntries = entries, savedSettings = {}) {
+function setup(responseEntries = entries, savedSettings = {}, overrides = {}) {
   const storage = {
     'local-danmaku-ui': JSON.stringify(savedSettings),
   };
@@ -36,6 +47,7 @@ function setup(responseEntries = entries, savedSettings = {}) {
       responseText: JSON.stringify(responseEntries),
     }),
   };
+  Object.assign(context, overrides);
   vm.runInNewContext(source, context);
   context.testApi.storage = storage;
   return context.testApi;
@@ -57,6 +69,144 @@ test('only bracketed mappings are rendered and explicit mappings take precedence
   assert.equal(nodes[2].src, entries.find((entry) => entry.text === '[比心]').url);
   assert.equal(nodes[3].src, entries.find((entry) => entry.text === '啊').url);
   assert.equal(nodes[4].text, ' [未知]');
+});
+
+test('XML import and playback do not wait for mapping and visible danmaku update on completion', async () => {
+  let request;
+  const api = setup(entries, { blockEmoticonOnly: true }, {
+    GM_xmlhttpRequest: (options) => { request = options; },
+  });
+  let parsed = false;
+  let playing = false;
+  api.setPlayback({
+    parseXml: (text) => { parsed = text === '<xml/>'; return []; },
+    ensureLayer: () => true,
+    bindVideoEvents: () => {},
+    seekTo: () => {},
+    tick: () => { playing = true; },
+  });
+  const nodes = ['[dog]', '好[dog]'].map((text) => ({
+    dataset: { danmakuPosition: 'scroll', danmakuColorful: 'false', danmakuText: text },
+    style: {},
+    offsetWidth: 42,
+    remove() { this.removed = true; },
+    replaceChildren() { this.children = []; },
+    appendChild(child) { this.children.push(child); },
+    getAnimations() { return [{ effect: { setKeyframes: (frames) => { this.frames = frames; } } }]; },
+  }));
+  api.setLayer({ clientWidth: 500, querySelectorAll: () => nodes });
+  await api.loadFile({ text: async () => '<xml/>' });
+  assert.equal(parsed, true);
+  assert.equal(playing, true);
+  assert.equal(render(api, '[dog]')[0].text, '[dog]');
+  request.onload({ status: 200, responseText: JSON.stringify(entries) });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(nodes[0].removed, true);
+  assert.equal(nodes[1].children[1].alt, '[dog]');
+  assert.equal(nodes[1].frames[1].transform, 'translateX(-42px)');
+});
+
+test('a slower earlier import cannot replace the most recently selected XML', async () => {
+  const parsed = [];
+  let finishFirst;
+  const api = setup(entries, {}, { GM_xmlhttpRequest: () => {} });
+  api.setPlayback({
+    parseXml: (text) => { parsed.push(text); return []; },
+    ensureLayer: () => true,
+    bindVideoEvents: () => {},
+    seekTo: () => {},
+    tick: () => {},
+  });
+  const first = api.loadFile({ text: () => new Promise((resolve) => { finishFirst = resolve; }) });
+  await api.loadFile({ text: async () => 'new' });
+  finishFirst('old');
+  await first;
+  assert.deepEqual(parsed, ['new']);
+});
+
+test('failure notice forces hidden button visible, tracks panel position, and closes', async () => {
+  let request;
+  let timer;
+  const elements = [];
+  function element(type) {
+    return {
+      type, style: {}, children: [], offsetHeight: 40,
+      setAttribute(name, value) { this[name] = value; },
+      append(...children) { this.children.push(...children); },
+      appendChild(child) { this.children.push(child); },
+      remove() { this.removed = true; },
+      animate(frames, options) { this.animation = { frames, options }; },
+    };
+  }
+  const root = element('div');
+  root.getBoundingClientRect = () => ({ left: 400, top: 100 });
+  const button = element('div');
+  button.getBoundingClientRect = () => ({ left: 400, right: 428, top: 100, bottom: 128 });
+  const panel = element('div');
+  panel.getBoundingClientRect = () => ({ left: 300, top: 134, width: 220 });
+  panel.offsetWidth = 220;
+  const api = setup(entries, { uiVisibility: 'hover' }, {
+    document: {
+      createElement: (type) => { const el = element(type); elements.push(el); return el; },
+    },
+    window: { innerWidth: 800, innerHeight: 600 },
+    GM_xmlhttpRequest: (options) => { request = options; },
+    console: { error() {} },
+    setTimeout: (callback, delay) => { timer = { callback, delay }; return 1; },
+    clearTimeout: () => {},
+  });
+  api.setUI(root, button, panel, false);
+  api.refreshVisibility();
+  assert.equal(root.style.opacity, '0');
+  api.startEmoticonsLoading();
+  request.onerror();
+  await new Promise((resolve) => setImmediate(resolve));
+  const notice = api.getNotice();
+  assert.equal(notice.role, 'alert');
+  assert.equal(root.style.opacity, '1');
+  assert.equal(timer.delay, 2000);
+  assert.equal(notice.style.top, '34px');
+  assert.equal(notice.children[2].animation.options.duration, 2000);
+  assert.equal(notice.children[2].animation.frames[0].transform, 'scaleX(1)');
+  assert.equal(notice.children[2].animation.frames[1].transform, 'scaleX(0)');
+  for (const [key, left, top] of [
+    ['player:top-left', '34px', '0px'],
+    ['player:mid-left', '34px', '0px'],
+    ['player:top-right', '-286px', '0px'],
+    ['player:mid-right', '-286px', '0px'],
+    ['player:top', '0px', '34px'],
+    ['list', '0px', '34px'],
+    ['free', '0px', '34px'],
+  ]) {
+    api.setUI(root, button, panel, false, key);
+    api.refreshVisibility();
+    assert.equal(notice.style.left, left, key);
+    assert.equal(notice.style.top, top, key);
+  }
+  button.getBoundingClientRect = () => ({ left: 700, right: 728, top: 570, bottom: 598 });
+  api.setUI(root, button, panel, false, 'player:mid-left');
+  api.refreshVisibility();
+  assert.equal(notice.style.width, '58px');
+  assert.equal(notice.style.left, '334px');
+  assert.equal(notice.style.top, '452px');
+  button.getBoundingClientRect = () => ({ left: 400, right: 428, top: 100, bottom: 128 });
+  api.setUI(root, button, panel, true);
+  api.refreshVisibility();
+  assert.equal(notice.style.top, '34px');
+  assert.equal(notice.style.left, '-100px');
+  assert.equal(notice.style.width, '220px');
+  notice.children[1].onclick();
+  assert.equal(notice.removed, true);
+  api.setUI(root, button, panel, false);
+  api.refreshVisibility();
+  assert.equal(root.style.opacity, '0');
+  api.startEmoticonsLoading();
+  request.ontimeout();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.ok(api.getNotice());
+  timer.callback();
+  assert.equal(api.getNotice(), null);
+  assert.equal(root.style.opacity, '0');
 });
 
 test('bracketed exact-host HTTPS links work without a mapping', () => {

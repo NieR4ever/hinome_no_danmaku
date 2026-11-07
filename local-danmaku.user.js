@@ -96,7 +96,6 @@
 
   let danmakus = []; // {t, mode, size, color, text}
   let emoticons = new Map();
-  let emoticonPattern = null;
   let emoticonsPromise = null;
   let layer = null;
   let video = null;
@@ -125,25 +124,23 @@
           },
           onerror: () => reject(new Error('网络请求失败')),
           ontimeout: () => reject(new Error('请求超时')),
-        })
+        });
       })
         .then((entries) => {
           if (!Array.isArray(entries)) throw new Error('映射文件格式无效');
           const mapping = new Map();
           entries.forEach(({ text, url }) => {
-            if (typeof text !== 'string' || !text || typeof url !== 'string') return;
-            const imageUrl = new URL(url);
-            if (imageUrl.protocol !== 'https:' || imageUrl.hostname !== 'i0.hdslb.com') return;
-            mapping.set(text, imageUrl.href);
-            if (!text.startsWith('[') && !mapping.has(`[${text}]`)) {
-              mapping.set(`[${text}]`, imageUrl.href);
+            if (typeof text !== 'string' || !text || typeof url !== 'string') {
+              throw new Error('映射条目格式无效');
             }
+            const imageUrl = new URL(url);
+            if (imageUrl.protocol !== 'https:' || imageUrl.hostname !== 'i0.hdslb.com') {
+              throw new Error(`无效的表情图片地址：${url}`);
+            }
+            const token = text.startsWith('[') && text.endsWith(']') ? text : `[${text}]`;
+            if (!mapping.has(token) || text === token) mapping.set(token, imageUrl.href);
           });
           emoticons = mapping;
-          const tokens = [...mapping.keys()].sort((a, b) => b.length - a.length);
-          emoticonPattern = tokens.length
-            ? new RegExp(tokens.map((token) => token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|'), 'g')
-            : null;
         })
         .catch((error) => {
           emoticonsPromise = null;
@@ -154,17 +151,16 @@
   }
 
   function appendTextWithEmoticons(container, text) {
-    if (!emoticonPattern) {
-      container.textContent = text;
-      return;
-    }
     let start = 0;
-    for (const match of text.matchAll(emoticonPattern)) {
+    for (const match of text.matchAll(/\[([^\[\]]+)\]/g)) {
       const token = match[0];
       const index = match.index;
+      const url = emoticons.get(token) ||
+        (match[1].startsWith('https://i0.hdslb.com/') ? match[1] : null);
+      if (!url) continue;
       if (index > start) container.appendChild(document.createTextNode(text.slice(start, index)));
       const image = document.createElement('img');
-      image.src = emoticons.get(token);
+      image.src = url;
       image.alt = token;
       image.title = token;
       image.style.cssText = 'height:1em;width:auto;vertical-align:-0.15em;';
@@ -410,6 +406,7 @@
     el.dataset.danmakuOpacity = 'true';
     el.dataset.danmakuPosition = d.mode === 5 ? 'top' : d.mode === 4 ? 'bottom' : 'scroll';
     el.dataset.danmakuColorful = String((d.color & 0xffffff) !== 0xffffff);
+    el.dataset.danmakuText = d.text;
     const tw = el.offsetWidth;
 
     if (d.mode === 4 || d.mode === 5) {
@@ -481,7 +478,12 @@
   }
 
   async function loadFile(file) {
-    await loadEmoticons();
+    try {
+      await loadEmoticons();
+    } catch (error) {
+      console.error(error);
+      alert(`${error.message}，将仅解析图片链接。`);
+    }
     const text = await file.text();
     danmakus = parseXml(text);
     if (!ensureLayer()) return alert('未找到视频播放器');
@@ -730,7 +732,7 @@
       updateCount();
       if (layer) {
         Array.from(layer.children).forEach((el) => {
-          if (hasBlockedWord(el.textContent)) el.remove();
+          if (hasBlockedWord(el.dataset.danmakuText)) el.remove();
         });
       }
     };

@@ -559,14 +559,20 @@
     if (!notice) return;
     const rootBounds = uiRoot.getBoundingClientRect();
     const anchor = (panelOpen ? settingsPanel : btn).getBoundingClientRect();
-    const width = panelOpen ? anchor.width : Math.min(280, window.innerWidth - 16);
-    const left = Math.max(8, Math.min(anchor.left, window.innerWidth - width - 8));
+    const side = !panelOpen && ['player:top-left', 'player:mid-left'].includes(placedKey) ? 'right'
+      : !panelOpen && ['player:top-right', 'player:mid-right'].includes(placedKey) ? 'left'
+        : null;
+    const availableWidth = side === 'right' ? window.innerWidth - anchor.right - 14
+      : side === 'left' ? anchor.left - 14 : window.innerWidth - 16;
+    const width = panelOpen ? anchor.width : Math.min(280, Math.max(0, availableWidth));
+    const left = side === 'right' ? anchor.right + 6
+      : side === 'left' ? anchor.left - width - 6
+        : Math.max(8, Math.min(anchor.left, window.innerWidth - width - 8));
     notice.style.width = `${width}px`;
     notice.style.left = `${left - rootBounds.left}px`;
-    const top = panelOpen ? anchor.top
-      : anchor.bottom + 6 + notice.offsetHeight <= window.innerHeight - 8
-        ? anchor.bottom + 6
-        : Math.max(8, anchor.top - notice.offsetHeight - 6);
+    const top = panelOpen ? anchor.top : side
+      ? Math.max(8, Math.min(anchor.top, window.innerHeight - notice.offsetHeight - 8))
+      : anchor.bottom + 6;
     notice.style.top = `${top - rootBounds.top}px`;
   }
 

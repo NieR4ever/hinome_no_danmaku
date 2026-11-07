@@ -14,8 +14,9 @@ const source = fs.readFileSync(path.join(root, 'local-danmaku.user.js'), 'utf8')
       bindVideoEvents = hooks.bindVideoEvents; seekTo = hooks.seekTo; tick = hooks.tick;
       video = { currentTime: 0 };
     },
-    setUI: (root, button, panel, open) => {
+    setUI: (root, button, panel, open, key = '') => {
       uiRoot = root; btn = button; settingsPanel = panel; panelOpen = open;
+      placedKey = key;
     },
     getNotice: () => notice,
     settings, setLayer: (value) => { layer = value; }, setPanel: (value) => { settingsPanel = value; }
@@ -140,7 +141,7 @@ test('failure notice forces hidden button visible, tracks panel position, and cl
   const root = element('div');
   root.getBoundingClientRect = () => ({ left: 400, top: 100 });
   const button = element('div');
-  button.getBoundingClientRect = () => ({ left: 400, top: 100, bottom: 128 });
+  button.getBoundingClientRect = () => ({ left: 400, right: 428, top: 100, bottom: 128 });
   const panel = element('div');
   panel.getBoundingClientRect = () => ({ left: 300, top: 134, width: 220 });
   panel.offsetWidth = 220;
@@ -168,6 +169,27 @@ test('failure notice forces hidden button visible, tracks panel position, and cl
   assert.equal(notice.children[2].animation.options.duration, 2000);
   assert.equal(notice.children[2].animation.frames[0].transform, 'scaleX(1)');
   assert.equal(notice.children[2].animation.frames[1].transform, 'scaleX(0)');
+  for (const [key, left, top] of [
+    ['player:top-left', '34px', '0px'],
+    ['player:mid-left', '34px', '0px'],
+    ['player:top-right', '-286px', '0px'],
+    ['player:mid-right', '-286px', '0px'],
+    ['player:top', '0px', '34px'],
+    ['list', '0px', '34px'],
+    ['free', '0px', '34px'],
+  ]) {
+    api.setUI(root, button, panel, false, key);
+    api.refreshVisibility();
+    assert.equal(notice.style.left, left, key);
+    assert.equal(notice.style.top, top, key);
+  }
+  button.getBoundingClientRect = () => ({ left: 700, right: 728, top: 570, bottom: 598 });
+  api.setUI(root, button, panel, false, 'player:mid-left');
+  api.refreshVisibility();
+  assert.equal(notice.style.width, '58px');
+  assert.equal(notice.style.left, '334px');
+  assert.equal(notice.style.top, '452px');
+  button.getBoundingClientRect = () => ({ left: 400, right: 428, top: 100, bottom: 128 });
   api.setUI(root, button, panel, true);
   api.refreshVisibility();
   assert.equal(notice.style.top, '34px');

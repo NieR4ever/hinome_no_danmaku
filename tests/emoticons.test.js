@@ -139,7 +139,7 @@ test('duplicate danmaku merge within five seconds from the first occurrence', ()
     [2, '别的弹幕', 1],
     [6.01, '来了来了', 1],
   ]);
-  assert.deepEqual([19, 20, 40, 100, 120].map(api.duplicateFontSizeIncrease), [0, 1, 2, 5, 5]);
+  assert.deepEqual([19, 20, 40, 100, 120].map(api.duplicateFontSizeIncrease), [0, 10, 20, 50, 50]);
 });
 
 test('duplicate merge setting restores and saves its value', () => {

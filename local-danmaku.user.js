@@ -233,7 +233,7 @@
   }
 
   function duplicateFontSizeIncrease(count) {
-    return Math.min(5, Math.floor(count / 20));
+    return Math.min(50, Math.floor(count / 20) * 10);
   }
 
   function addSettingToggle(label, key) {

@@ -6,16 +6,30 @@ const vm = require('node:vm');
 
 const root = path.join(__dirname, '..');
 const source = fs.readFileSync(path.join(root, 'local-danmaku.user.js'), 'utf8')
-  .replace('  createUI();\n})();', '  globalThis.testApi = { loadEmoticons, appendTextWithEmoticons };\n})();');
+  .replace('  createUI();\n})();', `  globalThis.testApi = {
+    loadEmoticons, appendTextWithEmoticons, isEmoticonOnly, isBlocked, addSettingToggle,
+    settings, setLayer: (value) => { layer = value; }, setPanel: (value) => { settingsPanel = value; }
+  };\n})();`);
 const entries = JSON.parse(fs.readFileSync(path.join(root, 'emoticons.json'), 'utf8'));
 
-function setup(responseEntries = entries) {
+function setup(responseEntries = entries, savedSettings = {}) {
+  const storage = {
+    'local-danmaku-ui': JSON.stringify(savedSettings),
+  };
   const context = {
     URL,
-    localStorage: { getItem: () => null },
+    localStorage: {
+      getItem: (key) => storage[key] || null,
+      setItem: (key, value) => { storage[key] = value; },
+    },
     document: {
       createTextNode: (text) => ({ type: 'text', text }),
-      createElement: () => ({ type: 'image', style: {} }),
+      createElement: (type) => ({
+        type,
+        style: {},
+        append(...children) { this.children = children; },
+        addEventListener(event, callback) { this[event] = callback; },
+      }),
     },
     GM_xmlhttpRequest: ({ onload }) => onload({
       status: 200,
@@ -23,6 +37,7 @@ function setup(responseEntries = entries) {
     }),
   };
   vm.runInNewContext(source, context);
+  context.testApi.storage = storage;
   return context.testApi;
 }
 
@@ -67,4 +82,45 @@ test('explicit bracketed mappings win regardless of order', async () => {
     await api.loadEmoticons();
     assert.equal(render(api, '[赞]')[0].src, url2);
   }
+});
+
+test('only recognized emoticons and whitespace count as pure emoticons', async () => {
+  const api = setup();
+  await api.loadEmoticons();
+  const url = '[https://i0.hdslb.com/bfs/emote/example.png]';
+  for (const text of ['[dog]', ' [赞] \t[比心] ', `${url}[dog]`, url]) {
+    assert.equal(api.isEmoticonOnly(text), true, text);
+  }
+  for (const text of ['', ' ', '赞', '[未知]', '[dog][未知]', '[dog]好', `文字${url}`, '[https://i0.hdslb.com.evil.test/a]']) {
+    assert.equal(api.isEmoticonOnly(text), false, text);
+  }
+});
+
+test('pure emoticon filter restores, saves and immediately removes matching visible danmaku', async () => {
+  const restored = setup(entries, { blockEmoticonOnly: true });
+  await restored.loadEmoticons();
+  assert.equal(restored.isBlocked('scroll', false, '[dog]'), true);
+  assert.equal(restored.isBlocked('scroll', false, '好[dog]'), false);
+
+  const api = setup();
+  await api.loadEmoticons();
+  assert.equal(api.isBlocked('scroll', false, '[dog]'), false);
+  const nodes = ['[dog]', '好[dog]', '[未知]'].map((text) => ({
+    dataset: { danmakuPosition: 'scroll', danmakuColorful: 'false', danmakuText: text },
+    remove() { this.removed = true; },
+  }));
+  api.setLayer({ querySelectorAll: () => nodes });
+  let row;
+  api.setPanel({ appendChild: (element) => { row = element; } });
+  api.addSettingToggle('纯表情', 'blockEmoticonOnly');
+  const input = row.children[0];
+  input.checked = true;
+  input.change();
+  assert.deepEqual(nodes.map((node) => !!node.removed), [true, false, false]);
+  assert.equal(JSON.parse(api.storage['local-danmaku-ui']).blockEmoticonOnly, true);
+  assert.equal(api.isBlocked('scroll', false, '[dog]'), true);
+  input.checked = false;
+  input.change();
+  assert.equal(api.isBlocked('scroll', false, '[dog]'), false);
+  assert.equal(JSON.parse(api.storage['local-danmaku-ui']).blockEmoticonOnly, false);
 });

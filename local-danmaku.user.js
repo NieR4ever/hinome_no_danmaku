@@ -30,6 +30,7 @@
     blockTop: false,
     blockBottom: false,
     blockColorful: false,
+    blockEmoticonOnly: false,
     offset: 0, // 弹幕偏移(秒)，正数为延后
     uiVisibility: 'always', // always | hover
     uiPosition: 'top-right', // top | top-left | top-right | mid-left | mid-right | list
@@ -49,7 +50,7 @@
         settings[key] = saved[key];
       }
     }
-    for (const key of ['scaleWithScreen', 'blockScroll', 'blockTop', 'blockBottom', 'blockColorful']) {
+    for (const key of ['scaleWithScreen', 'blockScroll', 'blockTop', 'blockBottom', 'blockColorful', 'blockEmoticonOnly']) {
       if (typeof saved[key] === 'boolean') settings[key] = saved[key];
     }
     if (['always', 'hover'].includes(saved.uiVisibility)) settings.uiVisibility = saved.uiVisibility;
@@ -150,13 +151,28 @@
     return emoticonsPromise;
   }
 
+  function emoticonUrl(token) {
+    return emoticons.get(token) ||
+      (token.startsWith('[https://i0.hdslb.com/') ? token.slice(1, -1) : null);
+  }
+
+  function isEmoticonOnly(text) {
+    let start = 0;
+    let found = false;
+    for (const match of text.matchAll(/\[([^\[\]]+)\]/g)) {
+      if (text.slice(start, match.index).trim() || !emoticonUrl(match[0])) return false;
+      found = true;
+      start = match.index + match[0].length;
+    }
+    return found && !text.slice(start).trim();
+  }
+
   function appendTextWithEmoticons(container, text) {
     let start = 0;
     for (const match of text.matchAll(/\[([^\[\]]+)\]/g)) {
       const token = match[0];
       const index = match.index;
-      const url = emoticons.get(token) ||
-        (match[1].startsWith('https://i0.hdslb.com/') ? match[1] : null);
+      const url = emoticonUrl(token);
       if (!url) continue;
       if (index > start) container.appendChild(document.createTextNode(text.slice(start, index)));
       const image = document.createElement('img');
@@ -200,7 +216,7 @@
       settings[key] = input.checked;
       if (input.checked && layer) {
         layer.querySelectorAll('[data-danmaku-position]').forEach((el) => {
-          if (isBlocked(el.dataset.danmakuPosition, el.dataset.danmakuColorful === 'true')) {
+          if (isBlocked(el.dataset.danmakuPosition, el.dataset.danmakuColorful === 'true', el.dataset.danmakuText)) {
             el.remove();
           }
         });
@@ -377,11 +393,12 @@
     return -1;
   }
 
-  function isBlocked(position, colorful) {
+  function isBlocked(position, colorful, text) {
     return (settings.blockScroll && position === 'scroll') ||
       (settings.blockTop && position === 'top') ||
       (settings.blockBottom && position === 'bottom') ||
-      (settings.blockColorful && colorful);
+      (settings.blockColorful && colorful) ||
+      (settings.blockEmoticonOnly && isEmoticonOnly(text));
   }
 
   function emit(d) {
@@ -458,7 +475,7 @@
       const d = danmakus[idx];
       const position = d.mode === 5 ? 'top' : d.mode === 4 ? 'bottom' : 'scroll';
       const colorful = (d.color & 0xffffff) !== 0xffffff;
-      if (!isBlocked(position, colorful) && !hasBlockedWord(d.text) && t - d.t < 1.5 && count < 30) {
+      if (!isBlocked(position, colorful, d.text) && !hasBlockedWord(d.text) && t - d.t < 1.5 && count < 30) {
         emit(d);
         count++;
       }
@@ -856,6 +873,7 @@
     addSettingToggle('顶部', 'blockTop');
     addSettingToggle('底部', 'blockBottom');
     addSettingToggle('彩色', 'blockColorful');
+    addSettingToggle('纯表情', 'blockEmoticonOnly');
     buildBlockWordsMenu();
     // 面板上的滚轮只滚动面板本身，不影响页面和播放器音量
     settingsPanel.addEventListener('wheel', (e) => {

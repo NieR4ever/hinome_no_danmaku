@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B站本地弹幕XML注入
 // @namespace    hinome_no_danmaku
-// @version      1.0.0
+// @version      1.1.0
 // @description  读取本地弹幕 XML（录播姬/B站格式），叠加渲染到B站视频播放器上，并与视频进度同步
 // @match        https://www.bilibili.com/video/*
 // @match        https://www.bilibili.com/bangumi/play/*
@@ -32,18 +32,33 @@
     uiPosition: 'top-right', // top | top-left | top-right | mid-left | mid-right | list
   };
 
+  let enabled = true;
   const UI_PREFS_KEY = 'local-danmaku-ui';
   try {
     const saved = JSON.parse(localStorage.getItem(UI_PREFS_KEY) || '{}');
+    for (const [key, min, max] of [
+      ['displayArea', 25, 100],
+      ['opacity', 10, 100],
+      ['fontScale', 50, 200],
+      ['speed', 50, 200],
+    ]) {
+      if (Number.isFinite(saved[key]) && saved[key] >= min && saved[key] <= max) {
+        settings[key] = saved[key];
+      }
+    }
+    if (Number.isFinite(saved.offset)) settings.offset = saved.offset;
+    for (const key of ['scaleWithScreen', 'blockScroll', 'blockTop', 'blockBottom', 'blockColorful']) {
+      if (typeof saved[key] === 'boolean') settings[key] = saved[key];
+    }
     if (['always', 'hover'].includes(saved.uiVisibility)) settings.uiVisibility = saved.uiVisibility;
-    if (typeof saved.uiPosition === 'string') settings.uiPosition = saved.uiPosition;
+    if (['top', 'top-left', 'top-right', 'mid-left', 'mid-right', 'list'].includes(saved.uiPosition)) {
+      settings.uiPosition = saved.uiPosition;
+    }
+    if (typeof saved.enabled === 'boolean') enabled = saved.enabled;
   } catch (e) { /* 忽略损坏的配置 */ }
-  function saveUiPrefs() {
+  function saveSettings() {
     try {
-      localStorage.setItem(UI_PREFS_KEY, JSON.stringify({
-        uiVisibility: settings.uiVisibility,
-        uiPosition: settings.uiPosition,
-      }));
+      localStorage.setItem(UI_PREFS_KEY, JSON.stringify({ ...settings, enabled }));
     } catch (e) { /* 忽略存储失败 */ }
   }
 
@@ -81,7 +96,6 @@
   let layer = null;
   let video = null;
   let idx = 0;
-  let enabled = true;
   let lastTime = 0;
   let rafId = 0;
   let lanes = { scroll: [], top: [], bottom: [] };
@@ -121,6 +135,7 @@
           }
         });
       }
+      saveSettings();
     });
     const title = document.createElement('span');
     title.textContent = label;
@@ -428,7 +443,7 @@
     if (key === 'uiVisibility') visibilitySelect = select;
     select.addEventListener('change', () => {
       settings[key] = select.value;
-      saveUiPrefs();
+      saveSettings();
       placedKey = '';
       nearUI = true;
       positionUI();
@@ -465,6 +480,7 @@
     input.addEventListener('input', () => {
       settings[key] = Number(input.value);
       applySettings();
+      saveSettings();
     });
     row.append(title, output, input);
     settingsPanel.appendChild(row);
@@ -584,6 +600,7 @@
       if (!Number.isFinite(v)) return sync();
       settings.offset = v;
       sync();
+      saveSettings();
       if (video && danmakus.length) seekTo(danmakuTime());
     };
     slider.addEventListener('input', () => apply(Number(slider.value)));
@@ -719,6 +736,7 @@
     enableBox.checked = enabled;
     enableBox.addEventListener('change', () => {
       enabled = enableBox.checked;
+      saveSettings();
       if (layer) layer.style.visibility = enabled ? 'visible' : 'hidden';
       if (enabled && video) setPaused(video.paused);
       else setPaused(true);

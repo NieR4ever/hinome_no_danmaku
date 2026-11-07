@@ -448,9 +448,11 @@
     appendTextWithEmoticons(el, d.count > 1 ? `${d.text}(${d.count})` : d.text);
     el.style.cssText =
       `position:absolute;white-space:pre;font-weight:bold;font-family:SimHei,"Microsoft YaHei",sans-serif;` +
-      `font-size:${fontSize}px;line-height:${laneH}px;opacity:${settings.opacity / 100};will-change:transform;` +
+      `opacity:${settings.opacity / 100};will-change:transform;` +
       `color:#${(d.color & 0xffffff).toString(16).padStart(6, '0')};` +
       'text-shadow:1px 0 1px #000,0 1px 1px #000,0 -1px 1px #000,-1px 0 1px #000;';
+    el.style.setProperty('font-size', `${fontSize}px`, 'important');
+    el.style.setProperty('line-height', `${laneH}px`, 'important');
     layer.appendChild(el);
     el.dataset.danmakuOpacity = 'true';
     el.dataset.danmakuPosition = d.mode === 5 ? 'top' : d.mode === 4 ? 'bottom' : 'scroll';

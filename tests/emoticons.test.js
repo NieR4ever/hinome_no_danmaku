@@ -8,8 +8,9 @@ const root = path.join(__dirname, '..');
 const source = fs.readFileSync(path.join(root, 'local-danmaku.user.js'), 'utf8')
   .replace('  createUI();\n})();', `  globalThis.testApi = {
     loadEmoticons, appendTextWithEmoticons, isEmoticonOnly, isBlocked, addSettingToggle,
-    mergeDuplicateDanmakus, duplicateFontSizeIncrease, settings,
-    setLayer: (value) => { layer = value; }, setPanel: (value) => { settingsPanel = value; }
+    mergeDuplicateDanmakus, duplicateFontSizeIncrease, emit, settings,
+    setLayer: (value) => { layer = value; }, setPanel: (value) => { settingsPanel = value; },
+    setVideo: (value) => { video = value; }
   };\n})();`);
 const entries = JSON.parse(fs.readFileSync(path.join(root, 'emoticons.json'), 'utf8'));
 
@@ -27,11 +28,23 @@ function setup(responseEntries = entries, savedSettings = {}) {
       createTextNode: (text) => ({ type: 'text', text }),
       createElement: (type) => ({
         type,
-        style: {},
+        style: {
+          setProperty(name, value, priority) {
+            this[name] = value;
+            this[`${name}Priority`] = priority;
+          },
+        },
+        dataset: {},
+        children: [],
         append(...children) { this.children = children; },
+        appendChild(child) { this.children.push(child); },
+        get offsetWidth() { return 100; },
+        animate() { return { pause() {} }; },
+        remove() { this.removed = true; },
         addEventListener(event, callback) { this[event] = callback; },
       }),
     },
+    performance: { now: () => 0 },
     GM_xmlhttpRequest: ({ onload }) => onload({
       status: 200,
       responseText: JSON.stringify(responseEntries),
@@ -140,6 +153,20 @@ test('duplicate danmaku merge within five seconds from the first occurrence', ()
     [6.01, '来了来了', 1],
   ]);
   assert.deepEqual([19, 20, 40, 100, 120].map(api.duplicateFontSizeIncrease), [0, 10, 20, 50, 50]);
+
+  const emitted = [];
+  api.setLayer({
+    clientWidth: 1000,
+    clientHeight: 600,
+    parentElement: { clientHeight: 600 },
+    appendChild: (element) => emitted.push(element),
+  });
+  api.setVideo({ paused: true });
+  api.emit({ t: 1, mode: 1, size: 25, color: 0xffffff, text: '弹幕', count: 19 });
+  api.emit({ t: 1, mode: 1, size: 25, color: 0xffffff, text: '弹幕', count: 20 });
+  assert.equal(emitted[0].style['font-size'], '26px');
+  assert.equal(emitted[1].style['font-size'], '36px');
+  assert.equal(emitted[1].style['font-sizePriority'], 'important');
 });
 
 test('duplicate merge setting restores and saves its value', () => {

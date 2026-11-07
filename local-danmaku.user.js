@@ -1,14 +1,15 @@
 // ==UserScript==
 // @name         B站本地弹幕XML注入
 // @namespace    hinome_no_danmaku
-// @version      1.1.0
+// @version      1.2.0
 // @description  读取本地弹幕 XML（录播姬/B站格式），叠加渲染到B站视频播放器上，并与视频进度同步
 // @match        https://www.bilibili.com/video/*
 // @match        https://www.bilibili.com/bangumi/play/*
 // @match        https://www.bilibili.com/list/*
 // @updateURL    https://raw.githubusercontent.com/NieR4ever/hinome_no_danmaku/main/local-danmaku.user.js
 // @downloadURL  https://raw.githubusercontent.com/NieR4ever/hinome_no_danmaku/main/local-danmaku.user.js
-// @grant        none
+// @connect      raw.githubusercontent.com
+// @grant        GM_xmlhttpRequest
 // @run-at       document-idle
 // ==/UserScript==
 
@@ -17,6 +18,8 @@
 
   const SCROLL_TIME = 8; // 滚动弹幕穿越时间(秒)
   const FIXED_TIME = 4;  // 顶部/底部弹幕停留时间(秒)
+  const EMOTICONS_URL =
+    'https://raw.githubusercontent.com/NieR4ever/hinome_no_danmaku/main/emoticons.json';
   const settings = {
     displayArea: 100,
     opacity: 90,
@@ -92,12 +95,84 @@
   compileBlockWords();
 
   let danmakus = []; // {t, mode, size, color, text}
+  let emoticons = new Map();
+  let emoticonPattern = null;
+  let emoticonsPromise = null;
   let layer = null;
   let video = null;
   let idx = 0;
   let lastTime = 0;
   let rafId = 0;
   let lanes = { scroll: [], top: [], bottom: [] };
+
+  function loadEmoticons() {
+    if (!emoticonsPromise) {
+      emoticonsPromise = new Promise((resolve, reject) => {
+        GM_xmlhttpRequest({
+          method: 'GET',
+          url: EMOTICONS_URL,
+          timeout: 15000,
+          onload: (response) => {
+            if (response.status < 200 || response.status >= 300) {
+              reject(new Error(`HTTP ${response.status}`));
+              return;
+            }
+            try {
+              resolve(JSON.parse(response.responseText));
+            } catch (error) {
+              reject(error);
+            }
+          },
+          onerror: () => reject(new Error('网络请求失败')),
+          ontimeout: () => reject(new Error('请求超时')),
+        })
+      })
+        .then((entries) => {
+          if (!Array.isArray(entries)) throw new Error('映射文件格式无效');
+          const mapping = new Map();
+          entries.forEach(({ text, url }) => {
+            if (typeof text !== 'string' || !text || typeof url !== 'string') return;
+            const imageUrl = new URL(url);
+            if (imageUrl.protocol !== 'https:' || imageUrl.hostname !== 'i0.hdslb.com') return;
+            mapping.set(text, imageUrl.href);
+            if (!text.startsWith('[') && !mapping.has(`[${text}]`)) {
+              mapping.set(`[${text}]`, imageUrl.href);
+            }
+          });
+          emoticons = mapping;
+          const tokens = [...mapping.keys()].sort((a, b) => b.length - a.length);
+          emoticonPattern = tokens.length
+            ? new RegExp(tokens.map((token) => token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|'), 'g')
+            : null;
+        })
+        .catch((error) => {
+          emoticonsPromise = null;
+          throw new Error(`加载表情映射失败：${error.message}`);
+        });
+    }
+    return emoticonsPromise;
+  }
+
+  function appendTextWithEmoticons(container, text) {
+    if (!emoticonPattern) {
+      container.textContent = text;
+      return;
+    }
+    let start = 0;
+    for (const match of text.matchAll(emoticonPattern)) {
+      const token = match[0];
+      const index = match.index;
+      if (index > start) container.appendChild(document.createTextNode(text.slice(start, index)));
+      const image = document.createElement('img');
+      image.src = emoticons.get(token);
+      image.alt = token;
+      image.title = token;
+      image.style.cssText = 'height:1em;width:auto;vertical-align:-0.15em;';
+      container.appendChild(image);
+      start = index + token.length;
+    }
+    if (start < text.length) container.appendChild(document.createTextNode(text.slice(start)));
+  }
 
   function parseXml(text) {
     const doc = new DOMParser().parseFromString(text, 'text/xml');
@@ -325,7 +400,7 @@
     const now = performance.now() / 1000;
 
     const el = document.createElement('div');
-    el.textContent = d.text;
+    appendTextWithEmoticons(el, d.text);
     el.style.cssText =
       `position:absolute;white-space:pre;font-weight:bold;font-family:SimHei,"Microsoft YaHei",sans-serif;` +
       `font-size:${fontSize}px;line-height:${laneH}px;opacity:${settings.opacity / 100};will-change:transform;` +
@@ -406,6 +481,7 @@
   }
 
   async function loadFile(file) {
+    await loadEmoticons();
     const text = await file.text();
     danmakus = parseXml(text);
     if (!ensureLayer()) return alert('未找到视频播放器');
@@ -689,7 +765,15 @@
     input.type = 'file';
     input.accept = '.xml,text/xml';
     input.style.display = 'none';
-    input.onchange = () => input.files[0] && loadFile(input.files[0]);
+    input.onchange = async () => {
+      if (!input.files[0]) return;
+      try {
+        await loadFile(input.files[0]);
+      } catch (error) {
+        console.error(error);
+        alert(error.message);
+      }
+    };
 
     uiRoot = document.createElement('div');
     uiRoot.id = 'local-danmaku-controls';

@@ -46,7 +46,6 @@
         settings[key] = saved[key];
       }
     }
-    if (Number.isFinite(saved.offset)) settings.offset = saved.offset;
     for (const key of ['scaleWithScreen', 'blockScroll', 'blockTop', 'blockBottom', 'blockColorful']) {
       if (typeof saved[key] === 'boolean') settings[key] = saved[key];
     }
@@ -58,7 +57,7 @@
   } catch (e) { /* 忽略损坏的配置 */ }
   function saveSettings() {
     try {
-      localStorage.setItem(UI_PREFS_KEY, JSON.stringify({ ...settings, enabled }));
+      localStorage.setItem(UI_PREFS_KEY, JSON.stringify({ ...settings, offset: undefined, enabled }));
     } catch (e) { /* 忽略存储失败 */ }
   }
 
@@ -600,7 +599,6 @@
       if (!Number.isFinite(v)) return sync();
       settings.offset = v;
       sync();
-      saveSettings();
       if (video && danmakus.length) seekTo(danmakuTime());
     };
     slider.addEventListener('input', () => apply(Number(slider.value)));

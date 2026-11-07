@@ -6,6 +6,8 @@
 // @match        https://www.bilibili.com/video/*
 // @match        https://www.bilibili.com/bangumi/play/*
 // @match        https://www.bilibili.com/list/*
+// @updateURL    https://raw.githubusercontent.com/NieR4ever/hinome_no_danmaku/main/local-danmaku.user.js
+// @downloadURL  https://raw.githubusercontent.com/NieR4ever/hinome_no_danmaku/main/local-danmaku.user.js
 // @grant        none
 // @run-at       document-idle
 // ==/UserScript==

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B站本地弹幕XML注入
 // @namespace    hinome_no_danmaku
-// @version      1.2.0
+// @version      1.2.1
 // @description  读取本地弹幕 XML（录播姬/B站格式），叠加渲染到B站视频播放器上，并与视频进度同步
 // @match        https://www.bilibili.com/video/*
 // @match        https://www.bilibili.com/bangumi/play/*
@@ -98,9 +98,11 @@
   let danmakus = []; // {t, mode, size, color, text}
   let emoticons = new Map();
   let emoticonsPromise = null;
+  let emoticonsLoadHandled = null;
   let layer = null;
   let video = null;
   let idx = 0;
+  let importId = 0;
   let lastTime = 0;
   let rafId = 0;
   let lanes = { scroll: [], top: [], bottom: [] };
@@ -313,7 +315,7 @@
   function refreshVisibility() {
     if (!uiRoot) return;
     const locked = placedKey === 'list';
-    const show = locked || settings.uiVisibility === 'always' || panelOpen || nearUI;
+    const show = locked || settings.uiVisibility === 'always' || panelOpen || nearUI || !!notice;
     uiRoot.style.opacity = show ? '1' : '0';
     uiRoot.style.pointerEvents = show ? 'auto' : 'none';
     fitPanel();
@@ -494,14 +496,45 @@
     v.addEventListener('emptied', clearScreen);
   }
 
-  async function loadFile(file) {
-    try {
-      await loadEmoticons();
-    } catch (error) {
+  function refreshVisibleEmoticons() {
+    if (!layer) return;
+    layer.querySelectorAll('[data-danmaku-position]').forEach((el) => {
+      const text = el.dataset.danmakuText;
+      if (![...text.matchAll(/\[([^\[\]]+)\]/g)].some((match) => emoticons.has(match[0]))) return;
+      if (isBlocked(el.dataset.danmakuPosition, el.dataset.danmakuColorful === 'true', text)) {
+        el.remove();
+        return;
+      }
+      el.replaceChildren();
+      appendTextWithEmoticons(el, text);
+      if (el.dataset.danmakuPosition === 'scroll') {
+        const animation = el.getAnimations()[0];
+        if (animation) {
+          animation.effect.setKeyframes([
+            { transform: `translateX(${layer.clientWidth}px)` },
+            { transform: `translateX(${-el.offsetWidth}px)` },
+          ]);
+        }
+      } else {
+        el.style.left = `${(layer.clientWidth - el.offsetWidth) / 2}px`;
+      }
+    });
+  }
+
+  function startEmoticonsLoading() {
+    if (emoticonsLoadHandled) return;
+    emoticonsLoadHandled = loadEmoticons().then(refreshVisibleEmoticons, (error) => {
+      emoticonsLoadHandled = null;
       console.error(error);
-      alert(`${error.message}，将仅解析图片链接。`);
-    }
+      showNotice(`${error.message}，将仅解析图片链接。`);
+    });
+  }
+
+  async function loadFile(file) {
+    const currentImport = ++importId;
+    startEmoticonsLoading();
     const text = await file.text();
+    if (currentImport !== importId) return;
     danmakus = parseXml(text);
     if (!ensureLayer()) return alert('未找到视频播放器');
     bindVideoEvents();
@@ -518,7 +551,64 @@
   let panelOpen = false;
   let nearUI = false;
   let visibilitySelect;
+  let notice = null;
+  let noticeTimer = 0;
   function setBtn(t) { if (btnLabel) btnLabel.textContent = t; }
+
+  function positionNotice() {
+    if (!notice) return;
+    const rootBounds = uiRoot.getBoundingClientRect();
+    const anchor = (panelOpen ? settingsPanel : btn).getBoundingClientRect();
+    const width = panelOpen ? anchor.width : Math.min(280, window.innerWidth - 16);
+    const left = Math.max(8, Math.min(anchor.left, window.innerWidth - width - 8));
+    notice.style.width = `${width}px`;
+    notice.style.left = `${left - rootBounds.left}px`;
+    const top = panelOpen ? anchor.top
+      : anchor.bottom + 6 + notice.offsetHeight <= window.innerHeight - 8
+        ? anchor.bottom + 6
+        : Math.max(8, anchor.top - notice.offsetHeight - 6);
+    notice.style.top = `${top - rootBounds.top}px`;
+  }
+
+  function closeNotice() {
+    clearTimeout(noticeTimer);
+    if (!notice) return;
+    notice.remove();
+    notice = null;
+    refreshVisibility();
+  }
+
+  function showNotice(message) {
+    closeNotice();
+    notice = document.createElement('div');
+    notice.setAttribute('role', 'alert');
+    notice.style.cssText =
+      'position:absolute;z-index:2147483002;box-sizing:border-box;overflow:hidden;' +
+      'padding:9px 30px 12px 10px;background:#333;color:#fff;border-radius:6px;' +
+      'font-size:12px;line-height:1.4;text-align:left;white-space:normal;overflow-wrap:anywhere;' +
+      'box-shadow:0 2px 8px rgba(0,0,0,.4);pointer-events:auto;';
+    const text = document.createElement('span');
+    text.textContent = message;
+    const close = document.createElement('button');
+    close.type = 'button';
+    close.setAttribute('aria-label', '关闭提示');
+    close.textContent = '×';
+    close.style.cssText =
+      'position:absolute;top:3px;right:5px;border:0;background:transparent;color:inherit;' +
+      'font-size:18px;line-height:20px;cursor:pointer;';
+    close.onclick = closeNotice;
+    const progress = document.createElement('div');
+    progress.style.cssText =
+      'position:absolute;bottom:0;left:0;width:100%;height:3px;background:#00a1d6;transform-origin:left;';
+    notice.append(text, close, progress);
+    uiRoot.appendChild(notice);
+    refreshVisibility();
+    positionNotice();
+    progress.animate([{ transform: 'scaleX(1)' }, { transform: 'scaleX(0)' }], {
+      duration: 2000, easing: 'linear', fill: 'forwards',
+    });
+    noticeTimer = setTimeout(closeNotice, 2000);
+  }
 
   function addSelectRow(label, key, options) {
     const row = document.createElement('label');
@@ -582,7 +672,10 @@
 
   // 限制面板高度，使其不超出播放器（或视口）下沿，超出部分在面板内滚动
   function fitPanel() {
-    if (!panelOpen) return;
+    if (!panelOpen) {
+      positionNotice();
+      return;
+    }
     const host = uiRoot.parentElement;
     const inPlayer = host && placedKey.startsWith('player');
     if (placedKey === 'list') {
@@ -600,6 +693,7 @@
       settingsPanel.style.transform = 'none';
       settingsPanel.style.maxHeight =
         `${Math.max(0, window.innerHeight - Math.max(8, top) - 8)}px`;
+      positionNotice();
       return;
     }
     if (inPlayer && placedKey.startsWith('player:mid-')) {
@@ -634,11 +728,13 @@
       settingsPanel.style.right = 'auto';
       settingsPanel.style.top = `${top - rootBounds.top}px`;
       settingsPanel.style.transform = 'none';
+      positionNotice();
       return;
     }
     const limit = inPlayer ? host.getBoundingClientRect().bottom : window.innerHeight;
     const top = settingsPanel.getBoundingClientRect().top;
     settingsPanel.style.maxHeight = `${Math.max(120, Math.min(limit, window.innerHeight) - top - 8)}px`;
+    positionNotice();
   }
 
   function openPanel() {

@@ -174,7 +174,7 @@ test('failure notice forces hidden button visible, tracks panel position, and cl
     ['player:mid-left', '34px', '0px'],
     ['player:top-right', '-286px', '0px'],
     ['player:mid-right', '-286px', '0px'],
-    ['player:top', '0px', '34px'],
+    ['player:top', '34px', '-6px'],
     ['list', '0px', '34px'],
     ['free', '0px', '34px'],
   ]) {
@@ -183,7 +183,15 @@ test('failure notice forces hidden button visible, tracks panel position, and cl
     assert.equal(notice.style.left, left, key);
     assert.equal(notice.style.top, top, key);
   }
+  button.getBoundingClientRect = () => ({ left: 400, right: 428, top: 10, bottom: 38 });
+  api.setUI(root, button, panel, false, 'player:top');
+  api.refreshVisibility();
+  assert.equal(notice.style.top, '-92px');
   button.getBoundingClientRect = () => ({ left: 700, right: 728, top: 570, bottom: 598 });
+  api.setUI(root, button, panel, false, 'player:top');
+  api.refreshVisibility();
+  assert.equal(notice.style.left, '14px');
+  assert.equal(notice.style.top, '452px');
   api.setUI(root, button, panel, false, 'player:mid-left');
   api.refreshVisibility();
   assert.equal(notice.style.width, '58px');
@@ -207,6 +215,51 @@ test('failure notice forces hidden button visible, tracks panel position, and cl
   timer.callback();
   assert.equal(api.getNotice(), null);
   assert.equal(root.style.opacity, '0');
+});
+
+test('top center player panel aligns with the button and stays within the viewport', () => {
+  const viewport = { innerWidth: 1000, innerHeight: 800 };
+  const host = { getBoundingClientRect: () => ({ left: 100, right: 900, top: 300, bottom: 700 }) };
+  let buttonBounds = { left: 110, right: 138, top: 310, bottom: 338, height: 28 };
+  const root = {
+    style: {}, parentElement: host,
+    getBoundingClientRect: () => ({ left: buttonBounds.left, top: buttonBounds.top }),
+    appendChild() {},
+  };
+  const button = { getBoundingClientRect: () => buttonBounds };
+  const panel = {
+    style: {}, offsetWidth: 220, offsetHeight: 400,
+    getBoundingClientRect: () => ({
+      left: buttonBounds.left + parseFloat(panel.style.left || 0),
+      top: buttonBounds.top + parseFloat(panel.style.top || 0),
+      width: 220,
+    }),
+  };
+  const api = setup(entries, {}, { window: viewport });
+  buttonBounds = { left: 486, right: 514, top: 310, bottom: 338, height: 28 };
+  api.setUI(root, button, panel, true, 'player:top');
+  api.refreshVisibility();
+  assert.equal(parseFloat(panel.style.left) + buttonBounds.left, 520);
+  assert.equal(parseFloat(panel.style.top) + buttonBounds.top, 124);
+  assert.equal(panel.style.maxHeight, '784px');
+  buttonBounds = { left: 486, right: 514, top: 20, bottom: 48, height: 28 };
+  api.setUI(root, button, panel, true, 'player:top');
+  api.refreshVisibility();
+  assert.equal(parseFloat(panel.style.top) + buttonBounds.top, 8);
+
+  for (const key of ['player:top-left', 'player:top-right']) {
+    api.setUI(root, button, panel, true, key);
+    api.refreshVisibility();
+    assert.equal(panel.style.top, 'calc(100% + 6px)', key);
+  }
+  buttonBounds = { left: 110, right: 138, top: 310, bottom: 338, height: 28 };
+  api.setUI(root, button, panel, true, 'player:mid-left');
+  api.refreshVisibility();
+  assert.equal(parseFloat(panel.style.top) + buttonBounds.top, 308);
+
+  api.setUI(root, button, panel, true, 'free');
+  api.refreshVisibility();
+  assert.equal(panel.style.top, 'calc(100% + 6px)');
 });
 
 test('bracketed exact-host HTTPS links work without a mapping', () => {

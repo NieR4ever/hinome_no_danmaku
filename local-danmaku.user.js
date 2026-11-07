@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B站本地弹幕XML注入
 // @namespace    hinome_no_danmaku
-// @version      1.2.1
+// @version      1.2.2
 // @description  读取本地弹幕 XML（录播姬/B站格式），叠加渲染到B站视频播放器上，并与视频进度同步
 // @match        https://www.bilibili.com/video/*
 // @match        https://www.bilibili.com/bangumi/play/*
@@ -559,7 +559,9 @@
     if (!notice) return;
     const rootBounds = uiRoot.getBoundingClientRect();
     const anchor = (panelOpen ? settingsPanel : btn).getBoundingClientRect();
-    const side = !panelOpen && ['player:top-left', 'player:mid-left'].includes(placedKey) ? 'right'
+    const side = !panelOpen && placedKey === 'player:top'
+      ? (window.innerWidth - anchor.right >= 294 || window.innerWidth - anchor.right >= anchor.left ? 'right' : 'left')
+      : !panelOpen && ['player:top-left', 'player:mid-left'].includes(placedKey) ? 'right'
       : !panelOpen && ['player:top-right', 'player:mid-right'].includes(placedKey) ? 'left'
         : null;
     const availableWidth = side === 'right' ? window.innerWidth - anchor.right - 14
@@ -570,8 +572,10 @@
         : Math.max(8, Math.min(anchor.left, window.innerWidth - width - 8));
     notice.style.width = `${width}px`;
     notice.style.left = `${left - rootBounds.left}px`;
+    const noticeTop = placedKey === 'player:top'
+      ? (anchor.top + anchor.bottom - notice.offsetHeight) / 2 : anchor.top;
     const top = panelOpen ? anchor.top : side
-      ? Math.max(8, Math.min(anchor.top, window.innerHeight - notice.offsetHeight - 8))
+      ? Math.max(8, Math.min(noticeTop, window.innerHeight - notice.offsetHeight - 8))
       : anchor.bottom + 6;
     notice.style.top = `${top - rootBounds.top}px`;
   }
@@ -702,14 +706,14 @@
       positionNotice();
       return;
     }
-    if (inPlayer && placedKey.startsWith('player:mid-')) {
+    if (inPlayer && (placedKey.startsWith('player:mid-') || placedKey === 'player:top')) {
       const bounds = host.getBoundingClientRect();
       const buttonBounds = btn.getBoundingClientRect();
       const panelWidth = settingsPanel.offsetWidth;
       const minLeft = Math.max(8, bounds.left + 8);
       const maxLeft = Math.min(window.innerWidth - panelWidth - 8, bounds.right - panelWidth - 8);
       const gap = 6;
-      const preferRight = placedKey === 'player:mid-left';
+      const preferRight = placedKey !== 'player:mid-right';
       const rightSideLeft = buttonBounds.right + gap;
       const leftSideLeft = buttonBounds.left - panelWidth - gap;
       const fitsRight = rightSideLeft <= maxLeft;
@@ -721,8 +725,9 @@
           : fitsRight
             ? rightSideLeft
             : Math.max(minLeft, Math.min(leftSideLeft, maxLeft));
-      const minTop = Math.max(8, bounds.top + 8);
-      const maxBottom = Math.min(window.innerHeight - 8, bounds.bottom - 8);
+      const atTop = placedKey === 'player:top';
+      const minTop = atTop ? 8 : Math.max(8, bounds.top + 8);
+      const maxBottom = atTop ? window.innerHeight - 8 : Math.min(window.innerHeight - 8, bounds.bottom - 8);
       settingsPanel.style.maxHeight = `${Math.max(0, maxBottom - minTop)}px`;
       const panelHeight = settingsPanel.offsetHeight;
       const top = Math.max(minTop, Math.min(
@@ -738,6 +743,7 @@
       return;
     }
     const limit = inPlayer ? host.getBoundingClientRect().bottom : window.innerHeight;
+    settingsPanel.style.top = 'calc(100% + 6px)';
     const top = settingsPanel.getBoundingClientRect().top;
     settingsPanel.style.maxHeight = `${Math.max(120, Math.min(limit, window.innerHeight) - top - 8)}px`;
     positionNotice();

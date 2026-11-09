@@ -70,10 +70,10 @@ test('density bins reflect peaks, zero valleys, offsets and video boundaries', (
   const { api } = setup();
   const data = [{ t: 0 }, { t: 0 }, { t: 1 }, { t: 159 }, { t: 160 }, { t: -1 }, { t: Infinity }];
   const path = api.densityPathFor(data, 160, 0);
-  assert.ok(path.startsWith('M0 100 L0 0 L3.125 0 C6.25 0 6.25 50 9.375 50 C12.5 50 12.5 100 15.625 100'));
-  assert.ok(path.endsWith('C993.75 100 993.75 0 996.875 0 L1000 0 L1000 100 Z'));
+  assert.ok(path.startsWith('M0 0 L0 100 L3.125 100 C6.25 100 6.25 50 9.375 50 C12.5 50 12.5 0 15.625 0'));
+  assert.ok(path.endsWith('C993.75 0 993.75 100 996.875 100 L1000 100 L1000 0 Z'));
   const shifted = api.densityPathFor(data, 160, 1);
-  assert.ok(shifted.startsWith('M0 100 L0 50 L3.125 50 C6.25 50 6.25 0 9.375 0'));
+  assert.ok(shifted.startsWith('M0 0 L0 50 L3.125 50 C6.25 50 6.25 100 9.375 100'));
   assert.equal(api.densityPathFor([{ t: -10 }, { t: 200 }], 160, 0), '');
 });
 
@@ -88,8 +88,8 @@ test('chart follows imports, offset, duration and replaced player without interc
   const path = chart.children[0];
   assert.equal(chart.parentElement, progress);
   assert.match(chart.style.cssText, /pointer-events:none/);
-  assert.match(chart.style.cssText, /bottom:100%/);
-  assert.doesNotMatch(chart.style.cssText, /top:100%/);
+  assert.match(chart.style.cssText, /top:100%/);
+  assert.doesNotMatch(chart.style.cssText, /bottom:100%/);
   assert.equal(chart.style.opacity, 0.25);
   assert.equal(chart.attributes['aria-hidden'], 'true');
   const original = path.attributes.d;

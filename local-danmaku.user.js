@@ -125,12 +125,16 @@
     }
     const max = Math.max(...bins);
     if (!max) return '';
-    let path = 'M0 100';
-    bins.forEach((count, i) => {
-      const y = 100 - count / max * 100;
-      path += ` L${i * 1000 / bins.length} ${y} L${(i + 1) * 1000 / bins.length} ${y}`;
-    });
-    return `${path} L1000 100 Z`;
+    const width = 1000 / bins.length;
+    let previousY = bins[0] / max * 100;
+    let path = `M0 0 L0 ${previousY} L${width / 2} ${previousY}`;
+    for (let i = 1; i < bins.length; i++) {
+      const y = bins[i] / max * 100;
+      const mid = i * width;
+      path += ` C${mid} ${previousY} ${mid} ${y} ${(i + 0.5) * width} ${y}`;
+      previousY = y;
+    }
+    return `${path} L1000 ${previousY} L1000 0 Z`;
   }
 
   function updateDensityChart() {
@@ -154,7 +158,7 @@
       densityChart.setAttribute('preserveAspectRatio', 'none');
       densityChart.setAttribute('aria-hidden', 'true');
       densityChart.style.cssText =
-        'position:absolute;left:0;bottom:100%;width:100%;height:36px;' +
+        'position:absolute;left:0;top:100%;width:100%;height:36px;' +
         'pointer-events:none;z-index:1;overflow:visible;';
       densityPath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
       densityPath.setAttribute('fill', '#00a1d6');

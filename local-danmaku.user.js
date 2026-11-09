@@ -579,14 +579,19 @@
   function closeNotice() {
     clearTimeout(noticeTimer);
     if (!notice) return;
-    notice.remove();
+    const closingNotice = notice;
     notice = null;
+    closingNotice.classList.add('ld-notice-closing');
+    closingNotice.setAttribute('aria-hidden', 'true');
+    closingNotice.style.pointerEvents = 'none';
+    setTimeout(() => closingNotice.remove(), 180);
     refreshVisibility();
   }
 
   function showNotice(message) {
     closeNotice();
     notice = document.createElement('div');
+    notice.className = 'ld-notice';
     notice.setAttribute('role', 'alert');
     notice.style.cssText =
       'position:absolute;z-index:2147483002;box-sizing:border-box;overflow:hidden;' +
@@ -610,9 +615,11 @@
     uiRoot.appendChild(notice);
     refreshVisibility();
     positionNotice();
-    progress.animate([{ transform: 'scaleX(1)' }, { transform: 'scaleX(0)' }], {
-      duration: 2000, easing: 'linear', fill: 'forwards',
-    });
+    if (!window.matchMedia || !window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      progress.animate([{ transform: 'scaleX(1)' }, { transform: 'scaleX(0)' }], {
+        duration: 2000, easing: 'linear', fill: 'forwards',
+      });
+    }
     noticeTimer = setTimeout(closeNotice, 2000);
   }
 
@@ -653,6 +660,11 @@
     });
   }
 
+  function updateRangeProgress(input) {
+    const progress = (Number(input.value) - Number(input.min)) / (Number(input.max) - Number(input.min));
+    input.style.setProperty('--ld-progress', `${Math.max(0, Math.min(1, progress)) * 100}%`);
+  }
+
   function addSettingRow(label, key, min, max, step) {
     const row = document.createElement('label');
     row.style.cssText = 'display:grid;grid-template-columns:1fr auto;gap:4px 8px;align-items:center;';
@@ -666,8 +678,11 @@
     input.step = step;
     input.value = settings[key];
     input.dataset.setting = key;
-    input.style.cssText = 'grid-column:1 / -1;width:100%;margin:0;accent-color:#00a1d6;';
+    input.className = 'ld-range';
+    input.style.cssText = 'grid-column:1 / -1;width:100%;margin:0;';
+    updateRangeProgress(input);
     input.addEventListener('input', () => {
+      updateRangeProgress(input);
       settings[key] = Number(input.value);
       applySettings();
       saveSettings();
@@ -744,18 +759,24 @@
   }
 
   function openPanel() {
+    showMainMenu();
     panelOpen = true;
-    settingsPanel.style.display = 'grid';
     fitPanel();
+    settingsPanel.inert = false;
+    settingsPanel.setAttribute('aria-hidden', 'false');
+    settingsPanel.classList.add('ld-panel-open');
+    btn.setAttribute('aria-expanded', 'true');
     refreshVisibility();
   }
 
   let showMainMenu = () => {};
 
   function closePanel() {
-    showMainMenu();
     panelOpen = false;
-    settingsPanel.style.display = 'none';
+    settingsPanel.inert = true;
+    settingsPanel.setAttribute('aria-hidden', 'true');
+    settingsPanel.classList.remove('ld-panel-open');
+    btn.setAttribute('aria-expanded', 'false');
     refreshVisibility();
   }
 
@@ -787,10 +808,12 @@
     slider.min = -5;
     slider.max = 5;
     slider.step = 0.1;
-    slider.style.cssText = 'grid-column:1 / -1;width:100%;margin:0;accent-color:#00a1d6;';
+    slider.className = 'ld-range';
+    slider.style.cssText = 'grid-column:1 / -1;width:100%;margin:0;';
     const sync = () => {
       text.value = String(Math.round(settings.offset * 100) / 100);
       slider.value = Math.max(-5, Math.min(5, settings.offset));
+      updateRangeProgress(slider);
     };
     const apply = (v) => {
       if (!Number.isFinite(v)) return sync();
@@ -882,6 +905,55 @@
   }
 
   function createUI() {
+    const styles = document.createElement('style');
+    styles.textContent = `
+      #local-danmaku-controls { transition: opacity 200ms ease; }
+      #local-danmaku-controls .ld-panel {
+        opacity: 0; visibility: hidden; pointer-events: none;
+        clip-path: inset(0 0 100% 0 round 6px);
+        transition: opacity 200ms ease, clip-path 240ms cubic-bezier(.2,.8,.2,1), visibility 0s linear 240ms;
+      }
+      #local-danmaku-controls .ld-panel.ld-panel-open {
+        opacity: 1; visibility: visible; pointer-events: auto;
+        clip-path: inset(0 round 6px);
+        transition: opacity 200ms ease, clip-path 240ms cubic-bezier(.2,.8,.2,1), visibility 0s;
+      }
+      #local-danmaku-controls .ld-notice {
+        animation: ld-notice-in 200ms ease both;
+        transition: opacity 180ms ease;
+      }
+      #local-danmaku-controls .ld-notice.ld-notice-closing { animation: none; opacity: 0; }
+      @keyframes ld-notice-in { from { opacity: 0; } to { opacity: 1; } }
+      #local-danmaku-controls .ld-range {
+        appearance: none; -webkit-appearance: none; height: 16px;
+        background-color: transparent;
+        background-image: linear-gradient(#00a1d6, #00a1d6), linear-gradient(#555, #555);
+        background-size: var(--ld-progress) 4px, 100% 4px;
+        background-position: left center; background-repeat: no-repeat;
+        transition: background-size 150ms ease; cursor: pointer;
+      }
+      #local-danmaku-controls .ld-range::-webkit-slider-runnable-track {
+        height: 4px; background: transparent;
+      }
+      #local-danmaku-controls .ld-range::-moz-range-track {
+        height: 4px; background: transparent;
+      }
+      #local-danmaku-controls .ld-range::-webkit-slider-thumb {
+        appearance: none; -webkit-appearance: none; width: 12px; height: 12px;
+        margin-top: -4px; border: 0; border-radius: 50%; background: #00a1d6;
+      }
+      #local-danmaku-controls .ld-range::-moz-range-thumb {
+        width: 12px; height: 12px; border: 0; border-radius: 50%; background: #00a1d6;
+      }
+      @media (prefers-reduced-motion: reduce) {
+        #local-danmaku-controls, #local-danmaku-controls .ld-panel,
+        #local-danmaku-controls .ld-panel.ld-panel-open,
+        #local-danmaku-controls .ld-notice, #local-danmaku-controls .ld-range {
+          transition: none; animation: none;
+        }
+      }
+    `;
+    document.head.appendChild(styles);
     const input = document.createElement('input');
     input.type = 'file';
     input.accept = '.xml,text/xml';
@@ -903,6 +975,9 @@
     // 圆角方形图标按钮：点击展开/收起面板
     btn = document.createElement('div');
     btn.title = '本地弹幕';
+    btn.setAttribute('role', 'button');
+    btn.setAttribute('tabindex', '0');
+    btn.setAttribute('aria-expanded', 'false');
     btn.style.cssText =
       'display:flex;align-items:center;justify-content:center;width:28px;height:28px;' +
       'box-sizing:border-box;background:#00a1d6;color:#fff;border-radius:6px;cursor:pointer;' +
@@ -913,11 +988,20 @@
       '<path d="M21 15a2 2 0 0 1-2 2H8l-5 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>' +
       '<path d="M8 9h8M8 13h5"/></svg>';
     btn.onclick = () => (panelOpen ? closePanel() : openPanel());
+    btn.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        btn.click();
+      }
+    });
 
     settingsPanel = document.createElement('div');
+    settingsPanel.className = 'ld-panel';
+    settingsPanel.inert = true;
+    settingsPanel.setAttribute('aria-hidden', 'true');
     settingsPanel.style.cssText =
-      'display:none;gap:6px;position:absolute;top:calc(100% + 6px);z-index:2147483001;width:220px;' +
-      'max-height:70vh;overflow:auto;overscroll-behavior:contain;box-sizing:border-box;padding:12px;pointer-events:auto;' +
+      'display:grid;gap:6px;position:absolute;top:calc(100% + 6px);z-index:2147483001;width:220px;' +
+      'max-height:70vh;overflow:auto;overscroll-behavior:contain;box-sizing:border-box;padding:12px;' +
       'background:rgba(20,20,20,.94);color:#fff;border-radius:6px;' +
       'font-size:12px;line-height:1.4;cursor:default;text-align:left;white-space:normal;';
 

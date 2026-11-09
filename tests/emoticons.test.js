@@ -9,6 +9,7 @@ const source = fs.readFileSync(path.join(root, 'local-danmaku.user.js'), 'utf8')
   .replace('  createUI();\n})();', `  globalThis.testApi = {
     loadEmoticons, appendTextWithEmoticons, isEmoticonOnly, isBlocked, addSettingToggle,
     loadFile, showNotice, refreshVisibility, startEmoticonsLoading,
+    openPanel, closePanel, updateRangeProgress,
     setPlayback: (hooks) => {
       parseXml = hooks.parseXml; ensureLayer = hooks.ensureLayer;
       bindVideoEvents = hooks.bindVideoEvents; seekTo = hooks.seekTo; tick = hooks.tick;
@@ -131,6 +132,7 @@ test('failure notice forces hidden button visible, tracks panel position, and cl
   function element(type) {
     return {
       type, style: {}, children: [], offsetHeight: 40,
+      classList: { add() {}, remove() {} },
       setAttribute(name, value) { this[name] = value; },
       append(...children) { this.children.push(...children); },
       appendChild(child) { this.children.push(child); },
@@ -196,6 +198,8 @@ test('failure notice forces hidden button visible, tracks panel position, and cl
   assert.equal(notice.style.left, '-100px');
   assert.equal(notice.style.width, '220px');
   notice.children[1].onclick();
+  assert.equal(notice.style.pointerEvents, 'none');
+  timer.callback();
   assert.equal(notice.removed, true);
   api.setUI(root, button, panel, false);
   api.refreshVisibility();
@@ -207,6 +211,54 @@ test('failure notice forces hidden button visible, tracks panel position, and cl
   timer.callback();
   assert.equal(api.getNotice(), null);
   assert.equal(root.style.opacity, '0');
+});
+
+test('panel can be reopened while closing and is inaccessible when closed', () => {
+  const classes = new Set();
+  const button = {
+    setAttribute(name, value) { this[name] = value; },
+  };
+  const panel = {
+    style: {},
+    classList: {
+      add(name) { classes.add(name); },
+      remove(name) { classes.delete(name); },
+    },
+    setAttribute(name, value) { this[name] = value; },
+    getBoundingClientRect: () => ({ top: 100 }),
+  };
+  const root = { style: {}, parentElement: null };
+  const api = setup(entries, {}, { window: { innerHeight: 600 } });
+  api.setUI(root, button, panel, false);
+  api.openPanel();
+  assert.equal(panel.inert, false);
+  assert.equal(panel['aria-hidden'], 'false');
+  assert.equal(button['aria-expanded'], 'true');
+  assert.ok(classes.has('ld-panel-open'));
+  api.closePanel();
+  assert.equal(panel.inert, true);
+  assert.equal(panel['aria-hidden'], 'true');
+  assert.equal(button['aria-expanded'], 'false');
+  assert.equal(classes.has('ld-panel-open'), false);
+  api.openPanel();
+  assert.ok(classes.has('ld-panel-open'));
+  assert.equal(panel.inert, false);
+});
+
+test('range progress reflects its bounds and current value', () => {
+  const api = setup();
+  const input = {
+    min: '-5', max: '5', value: '0',
+    style: { setProperty(name, value) { this[name] = value; } },
+  };
+  api.updateRangeProgress(input);
+  assert.equal(input.style['--ld-progress'], '50%');
+  input.value = '5';
+  api.updateRangeProgress(input);
+  assert.equal(input.style['--ld-progress'], '100%');
+  input.value = '-5';
+  api.updateRangeProgress(input);
+  assert.equal(input.style['--ld-progress'], '0%');
 });
 
 test('bracketed exact-host HTTPS links work without a mapping', () => {

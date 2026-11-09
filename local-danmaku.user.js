@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B站本地弹幕XML注入
 // @namespace    hinome_no_danmaku
-// @version      1.2.1
+// @version      1.2.2
 // @description  读取本地弹幕 XML（录播姬/B站格式），叠加渲染到B站视频播放器上，并与视频进度同步
 // @match        https://www.bilibili.com/video/*
 // @match        https://www.bilibili.com/bangumi/play/*

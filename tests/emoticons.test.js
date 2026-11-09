@@ -34,6 +34,7 @@ function setup(responseEntries = entries, savedSettings = {}, overrides = {}) {
       setItem: (key, value) => { storage[key] = value; },
     },
     document: {
+      querySelector: () => null,
       createTextNode: (text) => ({ type: 'text', text }),
       createElement: (type) => ({
         type,

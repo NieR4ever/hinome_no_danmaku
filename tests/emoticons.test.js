@@ -9,7 +9,7 @@ const source = fs.readFileSync(path.join(root, 'local-danmaku.user.js'), 'utf8')
   .replace('  createUI();\n})();', `  globalThis.testApi = {
     loadEmoticons, appendTextWithEmoticons, isEmoticonOnly, isBlocked, addSettingToggle,
     loadFile, showNotice, refreshVisibility, startEmoticonsLoading,
-    openPanel, closePanel, updateRangeProgress,
+    openPanel, closePanel,
     setPlayback: (hooks) => {
       parseXml = hooks.parseXml; ensureLayer = hooks.ensureLayer;
       bindVideoEvents = hooks.bindVideoEvents; seekTo = hooks.seekTo; tick = hooks.tick;
@@ -243,22 +243,6 @@ test('panel can be reopened while closing and is inaccessible when closed', () =
   api.openPanel();
   assert.ok(classes.has('ld-panel-open'));
   assert.equal(panel.inert, false);
-});
-
-test('range progress reflects its bounds and current value', () => {
-  const api = setup();
-  const input = {
-    min: '-5', max: '5', value: '0',
-    style: { setProperty(name, value) { this[name] = value; } },
-  };
-  api.updateRangeProgress(input);
-  assert.equal(input.style['--ld-progress'], '50%');
-  input.value = '5';
-  api.updateRangeProgress(input);
-  assert.equal(input.style['--ld-progress'], '100%');
-  input.value = '-5';
-  api.updateRangeProgress(input);
-  assert.equal(input.style['--ld-progress'], '0%');
 });
 
 test('bracketed exact-host HTTPS links work without a mapping', () => {

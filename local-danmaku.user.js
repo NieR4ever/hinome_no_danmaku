@@ -660,11 +660,6 @@
     });
   }
 
-  function updateRangeProgress(input) {
-    const progress = (Number(input.value) - Number(input.min)) / (Number(input.max) - Number(input.min));
-    input.style.setProperty('--ld-progress', `${Math.max(0, Math.min(1, progress)) * 100}%`);
-  }
-
   function addSettingRow(label, key, min, max, step) {
     const row = document.createElement('label');
     row.style.cssText = 'display:grid;grid-template-columns:1fr auto;gap:4px 8px;align-items:center;';
@@ -678,11 +673,8 @@
     input.step = step;
     input.value = settings[key];
     input.dataset.setting = key;
-    input.className = 'ld-range';
-    input.style.cssText = 'grid-column:1 / -1;width:100%;margin:0;';
-    updateRangeProgress(input);
+    input.style.cssText = 'grid-column:1 / -1;width:100%;margin:0;accent-color:#00a1d6;';
     input.addEventListener('input', () => {
-      updateRangeProgress(input);
       settings[key] = Number(input.value);
       applySettings();
       saveSettings();
@@ -808,12 +800,10 @@
     slider.min = -5;
     slider.max = 5;
     slider.step = 0.1;
-    slider.className = 'ld-range';
-    slider.style.cssText = 'grid-column:1 / -1;width:100%;margin:0;';
+    slider.style.cssText = 'grid-column:1 / -1;width:100%;margin:0;accent-color:#00a1d6;';
     const sync = () => {
       text.value = String(Math.round(settings.offset * 100) / 100);
       slider.value = Math.max(-5, Math.min(5, settings.offset));
-      updateRangeProgress(slider);
     };
     const apply = (v) => {
       if (!Number.isFinite(v)) return sync();
@@ -924,31 +914,10 @@
       }
       #local-danmaku-controls .ld-notice.ld-notice-closing { animation: none; opacity: 0; }
       @keyframes ld-notice-in { from { opacity: 0; } to { opacity: 1; } }
-      #local-danmaku-controls .ld-range {
-        appearance: none; -webkit-appearance: none; height: 16px;
-        background-color: transparent;
-        background-image: linear-gradient(#00a1d6, #00a1d6), linear-gradient(#555, #555);
-        background-size: var(--ld-progress) 4px, 100% 4px;
-        background-position: left center; background-repeat: no-repeat;
-        transition: background-size 150ms ease; cursor: pointer;
-      }
-      #local-danmaku-controls .ld-range::-webkit-slider-runnable-track {
-        height: 4px; background: transparent;
-      }
-      #local-danmaku-controls .ld-range::-moz-range-track {
-        height: 4px; background: transparent;
-      }
-      #local-danmaku-controls .ld-range::-webkit-slider-thumb {
-        appearance: none; -webkit-appearance: none; width: 12px; height: 12px;
-        margin-top: -4px; border: 0; border-radius: 50%; background: #00a1d6;
-      }
-      #local-danmaku-controls .ld-range::-moz-range-thumb {
-        width: 12px; height: 12px; border: 0; border-radius: 50%; background: #00a1d6;
-      }
       @media (prefers-reduced-motion: reduce) {
         #local-danmaku-controls, #local-danmaku-controls .ld-panel,
         #local-danmaku-controls .ld-panel.ld-panel-open,
-        #local-danmaku-controls .ld-notice, #local-danmaku-controls .ld-range {
+        #local-danmaku-controls .ld-notice {
           transition: none; animation: none;
         }
       }

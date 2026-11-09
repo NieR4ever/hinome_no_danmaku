@@ -310,6 +310,7 @@
     settingsPanel.style.left = side === 'left' ? '0' : side === 'center' ? '50%' : 'auto';
     settingsPanel.style.right = side === 'right' ? '0' : 'auto';
     settingsPanel.style.transform = side === 'center' ? 'translateX(-50%)' : 'none';
+    settingsPanel.style.transformOrigin = side === 'right' ? 'top right' : 'top left';
   }
 
   function refreshVisibility() {
@@ -697,6 +698,7 @@
       settingsPanel.style.right = 'auto';
       settingsPanel.style.top = `${top - rootBounds.top}px`;
       settingsPanel.style.transform = 'none';
+      settingsPanel.style.transformOrigin = 'top left';
       settingsPanel.style.maxHeight =
         `${Math.max(0, window.innerHeight - Math.max(8, top) - 8)}px`;
       positionNotice();
@@ -734,6 +736,7 @@
       settingsPanel.style.right = 'auto';
       settingsPanel.style.top = `${top - rootBounds.top}px`;
       settingsPanel.style.transform = 'none';
+      settingsPanel.style.transformOrigin = left >= buttonBounds.right ? 'left center' : 'right center';
       positionNotice();
       return;
     }
@@ -744,8 +747,12 @@
   }
 
   function openPanel() {
+    showMainMenu();
     panelOpen = true;
-    settingsPanel.style.display = 'grid';
+    settingsPanel.inert = false;
+    settingsPanel.setAttribute('aria-hidden', 'false');
+    btn.setAttribute('aria-expanded', 'true');
+    settingsPanel.dataset.open = 'true';
     fitPanel();
     refreshVisibility();
   }
@@ -753,9 +760,12 @@
   let showMainMenu = () => {};
 
   function closePanel() {
-    showMainMenu();
     panelOpen = false;
-    settingsPanel.style.display = 'none';
+    if (settingsPanel.contains(document.activeElement)) btn.focus();
+    settingsPanel.inert = true;
+    settingsPanel.setAttribute('aria-hidden', 'true');
+    btn.setAttribute('aria-expanded', 'false');
+    settingsPanel.dataset.open = 'false';
     refreshVisibility();
   }
 
@@ -882,6 +892,31 @@
   }
 
   function createUI() {
+    const styles = document.createElement('style');
+    styles.textContent = `
+      #local-danmaku-controls {
+        transition: opacity 200ms ease;
+      }
+      #local-danmaku-panel {
+        opacity: 0;
+        scale: .96;
+        visibility: hidden;
+        pointer-events: none;
+        transition: opacity 180ms ease, scale 220ms cubic-bezier(.2, .8, .2, 1),
+          visibility 0s linear 220ms;
+      }
+      #local-danmaku-panel[data-open="true"] {
+        opacity: 1;
+        scale: 1;
+        visibility: visible;
+        pointer-events: auto;
+        transition: opacity 180ms ease, scale 220ms cubic-bezier(.2, .8, .2, 1),
+          visibility 0s;
+      }
+      @media (prefers-reduced-motion: reduce) {
+        #local-danmaku-controls, #local-danmaku-panel { transition: none; }
+      }
+    `;
     const input = document.createElement('input');
     input.type = 'file';
     input.accept = '.xml,text/xml';
@@ -901,11 +936,15 @@
     uiRoot.style.cssText = 'position:relative;z-index:2147483000;margin:8px;pointer-events:auto;';
 
     // 圆角方形图标按钮：点击展开/收起面板
-    btn = document.createElement('div');
+    btn = document.createElement('button');
+    btn.type = 'button';
     btn.title = '本地弹幕';
+    btn.setAttribute('aria-label', '本地弹幕');
+    btn.setAttribute('aria-expanded', 'false');
+    btn.setAttribute('aria-controls', 'local-danmaku-panel');
     btn.style.cssText =
       'display:flex;align-items:center;justify-content:center;width:28px;height:28px;' +
-      'box-sizing:border-box;background:#00a1d6;color:#fff;border-radius:6px;cursor:pointer;' +
+      'box-sizing:border-box;padding:0;border:0;background:#00a1d6;color:#fff;border-radius:6px;cursor:pointer;' +
       'user-select:none;box-shadow:0 1px 4px rgba(0,0,0,.4);';
     btn.innerHTML =
       '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
@@ -915,9 +954,13 @@
     btn.onclick = () => (panelOpen ? closePanel() : openPanel());
 
     settingsPanel = document.createElement('div');
+    settingsPanel.id = 'local-danmaku-panel';
+    settingsPanel.dataset.open = 'false';
+    settingsPanel.inert = true;
+    settingsPanel.setAttribute('aria-hidden', 'true');
     settingsPanel.style.cssText =
-      'display:none;gap:6px;position:absolute;top:calc(100% + 6px);z-index:2147483001;width:220px;' +
-      'max-height:70vh;overflow:auto;overscroll-behavior:contain;box-sizing:border-box;padding:12px;pointer-events:auto;' +
+      'display:grid;gap:6px;position:absolute;top:calc(100% + 6px);z-index:2147483001;width:220px;' +
+      'max-height:70vh;overflow:auto;overscroll-behavior:contain;box-sizing:border-box;padding:12px;' +
       'background:rgba(20,20,20,.94);color:#fff;border-radius:6px;' +
       'font-size:12px;line-height:1.4;cursor:default;text-align:left;white-space:normal;';
 
@@ -984,6 +1027,9 @@
       settingsPanel.scrollTop += e.deltaY;
     }, { passive: false });
     window.addEventListener('resize', fitPanel);
+    settingsPanel.addEventListener('transitionend', (e) => {
+      if (e.target === settingsPanel && e.propertyName === 'scale') positionNotice();
+    });
     document.addEventListener('mousedown', (e) => {
       if (panelOpen && !uiRoot.contains(e.target)) closePanel();
     }, true);
@@ -995,7 +1041,7 @@
       settingsPanel.addEventListener(type, (e) => e.stopPropagation());
     });
 
-    uiRoot.append(input, btn, settingsPanel);
+    uiRoot.append(styles, input, btn, settingsPanel);
     document.body.appendChild(uiRoot);
     positionUI();
     updateSettingsLabels();

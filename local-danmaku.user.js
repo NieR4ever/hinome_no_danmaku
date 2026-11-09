@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B站本地弹幕XML注入
 // @namespace    hinome_no_danmaku
-// @version      1.2.2
+// @version      1.2.3
 // @description  读取本地弹幕 XML（录播姬/B站格式），叠加渲染到B站视频播放器上，并与视频进度同步
 // @match        https://www.bilibili.com/video/*
 // @match        https://www.bilibili.com/bangumi/play/*
@@ -114,6 +114,24 @@
   let densityDuration = NaN;
   let densityOffset = NaN;
   let densityData = null;
+  let densityTrack = null;
+
+  function positionDensityChart() {
+    if (!densityChart || !densityChart.parentElement || !densityTrack) return;
+    const host = densityChart.parentElement;
+    const hostRect = host.getBoundingClientRect();
+    const trackRect = densityTrack.getBoundingClientRect();
+    const scaleX = host.offsetWidth ? hostRect.width / host.offsetWidth : 1;
+    const scaleY = host.offsetHeight ? hostRect.height / host.offsetHeight : 1;
+    if (!scaleX || !scaleY) return;
+    const left = (trackRect.left - hostRect.left) / scaleX - host.clientLeft + host.scrollLeft;
+    const top = (trackRect.bottom - hostRect.top) / scaleY - host.clientTop + host.scrollTop;
+    const width = trackRect.width / scaleX;
+    for (const [key, value] of [['left', left], ['top', top], ['width', width]]) {
+      const pixels = `${value}px`;
+      if (densityChart.style[key] !== pixels) densityChart.style[key] = pixels;
+    }
+  }
 
   function densityPathFor(list, duration, offset) {
     const bins = new Array(160).fill(0);
@@ -151,6 +169,7 @@
       if (densityChart) densityChart.remove();
       return;
     }
+    densityTrack = progress.querySelector('.bpx-player-progress') || progress;
     if (!densityChart) {
       densityChart = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
       densityChart.id = 'local-danmaku-density';
@@ -158,16 +177,21 @@
       densityChart.setAttribute('preserveAspectRatio', 'none');
       densityChart.setAttribute('aria-hidden', 'true');
       densityChart.style.cssText =
-        'position:absolute;left:0;top:100%;width:100%;height:36px;' +
-        'pointer-events:none;z-index:1;overflow:visible;';
+        'position:absolute;height:36px;pointer-events:none;z-index:10;overflow:visible;';
       densityPath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
       densityPath.setAttribute('fill', '#00a1d6');
       densityChart.appendChild(densityPath);
     }
     if (densityChart.parentElement !== progress) {
-      if (getComputedStyle(progress).position === 'static') progress.style.position = 'relative';
+      const progressStyle = getComputedStyle(progress);
+      if (progressStyle.position === 'static') progress.style.position = 'relative';
+      if ([progressStyle.overflow, progressStyle.overflowX, progressStyle.overflowY]
+        .some((value) => value && value.split(' ').some((part) => part === 'hidden' || part === 'clip'))) {
+        progress.style.overflow = 'visible';
+      }
       progress.appendChild(densityChart);
     }
+    positionDensityChart();
     densityChart.style.opacity = settings.densityOpacity / 100;
     densityChart.style.display = enabled ? '' : 'none';
     if (densityVideo !== currentVideo || densityDuration !== duration ||
@@ -542,6 +566,7 @@
 
   function tick() {
     rafId = requestAnimationFrame(tick);
+    positionDensityChart();
     if (!enabled || !danmakus.length || !ensureLayer()) return;
     if (layer.style.display === 'none') return;
     const t = danmakuTime();

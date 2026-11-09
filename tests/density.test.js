@@ -6,7 +6,7 @@ const vm = require('node:vm');
 
 const source = fs.readFileSync(path.join(__dirname, '..', 'local-danmaku.user.js'), 'utf8')
   .replace('  createUI();\n})();', `  globalThis.testApi = {
-    densityPathFor, updateDensityChart, bindVideoEvents, applySettings, addSettingRow,
+    densityPathFor, updateDensityChart, positionDensityChart, bindVideoEvents, applySettings, addSettingRow,
     settings, saveSettings,
     setData: (data) => { danmakus = data; },
     setPanel: (panel) => { settingsPanel = panel; },
@@ -19,6 +19,8 @@ function setup(saved = {}) {
   function element(type) {
     return {
       type, style: {}, dataset: {}, attributes: {}, children: [], parentElement: null,
+      offsetWidth: 400, offsetHeight: 20, clientLeft: 0, clientTop: 0, scrollLeft: 0, scrollTop: 0,
+      getBoundingClientRect() { return { left: 100, top: 200, bottom: 220, width: 400, height: 20 }; },
       setAttribute(name, value) { this.attributes[name] = value; },
       appendChild(child) {
         if (child.parentElement) child.remove();
@@ -47,7 +49,7 @@ function setup(saved = {}) {
       createElement: element,
       createElementNS: (namespace, type) => element(type),
     },
-    getComputedStyle: () => ({ position: 'static' }),
+    getComputedStyle: () => ({ position: 'static', overflow: 'hidden' }),
   };
   vm.runInNewContext(source, context);
   return {
@@ -88,8 +90,10 @@ test('chart follows imports, offset, duration and replaced player without interc
   const path = chart.children[0];
   assert.equal(chart.parentElement, progress);
   assert.match(chart.style.cssText, /pointer-events:none/);
-  assert.match(chart.style.cssText, /top:100%/);
-  assert.doesNotMatch(chart.style.cssText, /bottom:100%/);
+  assert.equal(chart.style.top, '20px');
+  assert.equal(chart.style.left, '0px');
+  assert.equal(chart.style.width, '400px');
+  assert.equal(progress.style.overflow, 'visible');
   assert.equal(chart.style.opacity, 0.25);
   assert.equal(chart.attributes['aria-hidden'], 'true');
   const original = path.attributes.d;
@@ -121,6 +125,33 @@ test('chart follows imports, offset, duration and replaced player without interc
   api.setData([]);
   api.updateDensityChart();
   assert.equal(chart.parentElement, null);
+});
+
+test('chart tracks the actual progress bar under a scaled and inset wrapper', () => {
+  const { api, element, setVideo } = setup();
+  const progress = element('div');
+  progress.offsetWidth = 400;
+  progress.offsetHeight = 30;
+  progress.clientLeft = 2;
+  progress.clientTop = 1;
+  progress.scrollLeft = 3;
+  progress.scrollTop = 4;
+  progress.getBoundingClientRect = () => ({ left: 100, top: 200, width: 800, height: 60 });
+  const track = element('div');
+  track.getBoundingClientRect = () => ({ left: 140, top: 212, bottom: 220, width: 720 });
+  progress.querySelector = (selector) => selector === '.bpx-player-progress' ? track : null;
+  setVideo(makeVideo(progress, 100));
+  api.setData([{ t: 10 }]);
+  api.updateDensityChart();
+  const chart = api.getChart();
+  assert.equal(chart.style.left, '21px');
+  assert.equal(chart.style.top, '13px');
+  assert.equal(chart.style.width, '360px');
+  track.getBoundingClientRect = () => ({ left: 160, top: 220, bottom: 230, width: 600 });
+  api.positionDensityChart();
+  assert.equal(chart.style.left, '31px');
+  assert.equal(chart.style.top, '18px');
+  assert.equal(chart.style.width, '300px');
 });
 
 test('density opacity restores, validates, updates immediately and persists', () => {

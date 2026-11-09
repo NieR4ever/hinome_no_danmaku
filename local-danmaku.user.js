@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B站本地弹幕XML注入
 // @namespace    hinome_no_danmaku
-// @version      1.2.2
+// @version      1.3.0
 // @description  读取本地弹幕 XML（录播姬/B站格式），叠加渲染到B站视频播放器上，并与视频进度同步
 // @match        https://www.bilibili.com/video/*
 // @match        https://www.bilibili.com/bangumi/play/*
@@ -23,6 +23,8 @@
   const settings = {
     displayArea: 100,
     opacity: 90,
+    densityOpacity: 25,
+    showDensity: true,
     fontScale: 100,
     speed: 100,
     scaleWithScreen: true,
@@ -43,6 +45,7 @@
     for (const [key, min, max] of [
       ['displayArea', 25, 100],
       ['opacity', 10, 100],
+      ['densityOpacity', 0, 100],
       ['fontScale', 50, 200],
       ['speed', 50, 200],
     ]) {
@@ -50,7 +53,7 @@
         settings[key] = saved[key];
       }
     }
-    for (const key of ['scaleWithScreen', 'blockScroll', 'blockTop', 'blockBottom', 'blockColorful', 'blockEmoticonOnly']) {
+    for (const key of ['showDensity', 'scaleWithScreen', 'blockScroll', 'blockTop', 'blockBottom', 'blockColorful', 'blockEmoticonOnly']) {
       if (typeof saved[key] === 'boolean') settings[key] = saved[key];
     }
     if (['always', 'hover'].includes(saved.uiVisibility)) settings.uiVisibility = saved.uiVisibility;
@@ -106,6 +109,106 @@
   let lastTime = 0;
   let rafId = 0;
   let lanes = { scroll: [], top: [], bottom: [] };
+  let densityChart = null;
+  let densityPath = null;
+  let densityVideo = null;
+  let densityDuration = NaN;
+  let densityOffset = NaN;
+  let densityData = null;
+  let densityTrack = null;
+
+  function positionDensityChart() {
+    if (!densityChart || !densityChart.parentElement || !densityTrack) return;
+    const host = densityChart.parentElement;
+    const hostRect = host.getBoundingClientRect();
+    const trackRect = densityTrack.getBoundingClientRect();
+    const scaleX = host.offsetWidth ? hostRect.width / host.offsetWidth : 1;
+    const scaleY = host.offsetHeight ? hostRect.height / host.offsetHeight : 1;
+    if (!scaleX || !scaleY) return;
+    const left = (trackRect.left - hostRect.left) / scaleX - host.clientLeft + host.scrollLeft;
+    const top = (trackRect.bottom - hostRect.top) / scaleY - host.clientTop + host.scrollTop;
+    const width = trackRect.width / scaleX;
+    for (const [key, value] of [['left', left], ['top', top], ['width', width]]) {
+      const pixels = `${value}px`;
+      if (densityChart.style[key] !== pixels) densityChart.style[key] = pixels;
+    }
+  }
+
+  function densityPathFor(list, duration, offset) {
+    const bins = new Array(160).fill(0);
+    for (const d of list) {
+      const time = d.t + offset;
+      if (!Number.isFinite(time) || time < 0 || time > duration) continue;
+      const index = Math.min(bins.length - 1, Math.floor(time / duration * bins.length));
+      bins[index]++;
+    }
+    const max = Math.max(...bins);
+    if (!max) return '';
+    const width = 1000 / bins.length;
+    let previousY = bins[0] / max * 100;
+    let path = `M0 0 L0 ${previousY} L${width / 2} ${previousY}`;
+    for (let i = 1; i < bins.length; i++) {
+      const y = bins[i] / max * 100;
+      const mid = i * width;
+      path += ` C${mid} ${previousY} ${mid} ${y} ${(i + 0.5) * width} ${y}`;
+      previousY = y;
+    }
+    return `${path} L1000 ${previousY} L1000 0 Z`;
+  }
+
+  function updateDensityChart() {
+    const currentVideo = findVideo();
+    const duration = currentVideo && currentVideo.duration;
+    if (!currentVideo || !Number.isFinite(duration) || duration <= 0 || !danmakus.length) {
+      if (densityChart) densityChart.remove();
+      return;
+    }
+    const player = currentVideo.closest('.bpx-player-container, #bilibiliPlayer') ||
+      currentVideo.closest('.bpx-player-video-area');
+    const progress = player && player.querySelector('.bpx-player-progress-wrap');
+    if (!progress) {
+      if (densityChart) densityChart.remove();
+      return;
+    }
+    densityTrack = progress.querySelector('.bpx-player-progress') || progress;
+    if (!densityChart) {
+      densityChart = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      densityChart.id = 'local-danmaku-density';
+      densityChart.setAttribute('viewBox', '0 0 1000 100');
+      densityChart.setAttribute('preserveAspectRatio', 'none');
+      densityChart.setAttribute('aria-hidden', 'true');
+      densityChart.style.cssText =
+        'position:absolute;height:36px;pointer-events:none;z-index:-1;overflow:visible;';
+      densityPath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      densityPath.setAttribute('fill', '#00a1d6');
+      densityChart.appendChild(densityPath);
+    }
+    if (densityChart.parentElement !== progress) {
+      const progressStyle = getComputedStyle(progress);
+      if (progressStyle.position === 'static') progress.style.position = 'relative';
+      progress.style.isolation = 'isolate';
+      if ([progressStyle.overflow, progressStyle.overflowX, progressStyle.overflowY]
+        .some((value) => value && value.split(' ').some((part) => part === 'hidden' || part === 'clip'))) {
+        progress.style.overflow = 'visible';
+      }
+      progress.appendChild(densityChart);
+    }
+    positionDensityChart();
+    densityChart.style.opacity = settings.densityOpacity / 100;
+    refreshDensityVisibility();
+    if (densityVideo !== currentVideo || densityDuration !== duration ||
+        densityOffset !== settings.offset || densityData !== danmakus) {
+      densityPath.setAttribute('d', densityPathFor(danmakus, duration, settings.offset));
+      densityVideo = currentVideo;
+      densityDuration = duration;
+      densityOffset = settings.offset;
+      densityData = danmakus;
+    }
+  }
+
+  function refreshDensityVisibility() {
+    if (densityChart) densityChart.style.display = enabled && settings.showDensity ? '' : 'none';
+  }
 
   function loadEmoticons() {
     if (!emoticonsPromise) {
@@ -216,7 +319,8 @@
     input.checked = settings[key];
     input.addEventListener('change', () => {
       settings[key] = input.checked;
-      if (input.checked && layer) {
+      if (key === 'showDensity') refreshDensityVisibility();
+      else if (input.checked && layer) {
         layer.querySelectorAll('[data-danmaku-position]').forEach((el) => {
           if (isBlocked(el.dataset.danmakuPosition, el.dataset.danmakuColorful === 'true', el.dataset.danmakuText)) {
             el.remove();
@@ -362,6 +466,7 @@
         el.style.opacity = settings.opacity / 100;
       });
     }
+    if (densityChart) densityChart.style.opacity = settings.densityOpacity / 100;
     if (settingsPanel) updateSettingsLabels();
   }
 
@@ -468,6 +573,7 @@
 
   function tick() {
     rafId = requestAnimationFrame(tick);
+    positionDensityChart();
     if (!enabled || !danmakus.length || !ensureLayer()) return;
     if (layer.style.display === 'none') return;
     const t = danmakuTime();
@@ -495,6 +601,11 @@
     v.addEventListener('play', () => setPaused(false));
     v.addEventListener('seeking', () => seekTo(danmakuTime()));
     v.addEventListener('emptied', clearScreen);
+    ['loadedmetadata', 'durationchange', 'emptied'].forEach((event) => {
+      v.addEventListener(event, () => {
+        if (findVideo() === v) updateDensityChart();
+      });
+    });
   }
 
   function refreshVisibleEmoticons() {
@@ -540,6 +651,7 @@
     if (!ensureLayer()) return alert('未找到视频播放器');
     bindVideoEvents();
     seekTo(danmakuTime());
+    updateDensityChart();
     if (!rafId) tick();
     setBtn(`本地弹幕: ${danmakus.length}条`);
   }
@@ -807,6 +919,7 @@
       settings.offset = v;
       sync();
       if (video && danmakus.length) seekTo(danmakuTime());
+      updateDensityChart();
     };
     slider.addEventListener('input', () => apply(Number(slider.value)));
     text.addEventListener('change', () => apply(parseFloat(text.value)));
@@ -984,6 +1097,7 @@
       enabled = enableBox.checked;
       saveSettings();
       if (layer) layer.style.visibility = enabled ? 'visible' : 'hidden';
+      refreshDensityVisibility();
       if (enabled && video) setPaused(video.paused);
       else setPaused(true);
     });
@@ -1007,6 +1121,8 @@
     addOffsetRow();
     addSettingRow('显示区域', 'displayArea', 25, 100, 25);
     addSettingRow('不透明度', 'opacity', 10, 100, 5);
+    addSettingToggle('显示密度图', 'showDensity');
+    addSettingRow('密度图不透明度', 'densityOpacity', 0, 100, 5);
     addSettingRow('弹幕字号', 'fontScale', 50, 200, 10);
     addSettingRow('弹幕速度', 'speed', 50, 200, 10);
     addSettingToggle('弹幕随屏幕缩放', 'scaleWithScreen');
@@ -1054,6 +1170,10 @@
       requestAnimationFrame(() => {
         scheduled = false;
         positionUI();
+        if (danmakus.length) {
+          bindVideoEvents();
+          updateDensityChart();
+        }
       });
     }).observe(document.body, { childList: true, subtree: true });
   }

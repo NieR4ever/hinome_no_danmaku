@@ -8,7 +8,7 @@ const root = path.join(__dirname, '..');
 const source = fs.readFileSync(path.join(root, 'local-danmaku.user.js'), 'utf8')
   .replace('  createUI();\n})();', `  globalThis.testApi = {
     loadEmoticons, appendTextWithEmoticons, isEmoticonOnly, isBlocked, addSettingToggle,
-    loadFile, showNotice, refreshVisibility, startEmoticonsLoading,
+    loadFile, showNotice, refreshVisibility, startEmoticonsLoading, openPanel, closePanel,
     setPlayback: (hooks) => {
       parseXml = hooks.parseXml; ensureLayer = hooks.ensureLayer;
       bindVideoEvents = hooks.bindVideoEvents; seekTo = hooks.seekTo; tick = hooks.tick;
@@ -207,6 +207,45 @@ test('failure notice forces hidden button visible, tracks panel position, and cl
   timer.callback();
   assert.equal(api.getNotice(), null);
   assert.equal(root.style.opacity, '0');
+});
+
+test('panel transitions remain interactive only when open, including rapid toggles', () => {
+  const focused = {};
+  const document = { activeElement: focused };
+  const api = setup(entries, { uiVisibility: 'hover' }, {
+    document,
+    window: { innerHeight: 600, innerWidth: 800 },
+  });
+  const root = { style: {}, parentElement: {} };
+  const button = {
+    attributes: {},
+    setAttribute(name, value) { this.attributes[name] = value; },
+    focus() { document.activeElement = this; },
+  };
+  const panel = {
+    style: {}, dataset: {}, attributes: {},
+    setAttribute(name, value) { this.attributes[name] = value; },
+    contains(element) { return element === focused; },
+    getBoundingClientRect() { return { top: 100 }; },
+  };
+  api.setUI(root, button, panel, false, 'free');
+  api.openPanel();
+  assert.equal(panel.dataset.open, 'true');
+  assert.equal(panel.inert, false);
+  assert.equal(panel.attributes['aria-hidden'], 'false');
+  assert.equal(button.attributes['aria-expanded'], 'true');
+  assert.equal(root.style.opacity, '1');
+  api.closePanel();
+  assert.equal(panel.dataset.open, 'false');
+  assert.equal(panel.inert, true);
+  assert.equal(panel.attributes['aria-hidden'], 'true');
+  assert.equal(button.attributes['aria-expanded'], 'false');
+  assert.equal(document.activeElement, button);
+  assert.equal(root.style.pointerEvents, 'none');
+  api.openPanel();
+  assert.equal(panel.dataset.open, 'true');
+  assert.equal(panel.inert, false);
+  assert.equal(root.style.pointerEvents, 'auto');
 });
 
 test('bracketed exact-host HTTPS links work without a mapping', () => {

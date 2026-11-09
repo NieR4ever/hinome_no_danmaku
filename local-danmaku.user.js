@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B站本地弹幕XML注入
 // @namespace    hinome_no_danmaku
-// @version      1.2.3
+// @version      1.2.4
 // @description  读取本地弹幕 XML（录播姬/B站格式），叠加渲染到B站视频播放器上，并与视频进度同步
 // @match        https://www.bilibili.com/video/*
 // @match        https://www.bilibili.com/bangumi/play/*
@@ -23,7 +23,8 @@
   const settings = {
     displayArea: 100,
     opacity: 90,
-    densityOpacity: 50,
+    densityOpacity: 25,
+    showDensity: true,
     fontScale: 100,
     speed: 100,
     scaleWithScreen: true,
@@ -52,7 +53,7 @@
         settings[key] = saved[key];
       }
     }
-    for (const key of ['scaleWithScreen', 'blockScroll', 'blockTop', 'blockBottom', 'blockColorful', 'blockEmoticonOnly']) {
+    for (const key of ['showDensity', 'scaleWithScreen', 'blockScroll', 'blockTop', 'blockBottom', 'blockColorful', 'blockEmoticonOnly']) {
       if (typeof saved[key] === 'boolean') settings[key] = saved[key];
     }
     if (['always', 'hover'].includes(saved.uiVisibility)) settings.uiVisibility = saved.uiVisibility;
@@ -177,7 +178,7 @@
       densityChart.setAttribute('preserveAspectRatio', 'none');
       densityChart.setAttribute('aria-hidden', 'true');
       densityChart.style.cssText =
-        'position:absolute;height:36px;pointer-events:none;z-index:10;overflow:visible;';
+        'position:absolute;height:36px;pointer-events:none;z-index:-1;overflow:visible;';
       densityPath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
       densityPath.setAttribute('fill', '#00a1d6');
       densityChart.appendChild(densityPath);
@@ -185,6 +186,7 @@
     if (densityChart.parentElement !== progress) {
       const progressStyle = getComputedStyle(progress);
       if (progressStyle.position === 'static') progress.style.position = 'relative';
+      progress.style.isolation = 'isolate';
       if ([progressStyle.overflow, progressStyle.overflowX, progressStyle.overflowY]
         .some((value) => value && value.split(' ').some((part) => part === 'hidden' || part === 'clip'))) {
         progress.style.overflow = 'visible';
@@ -193,7 +195,7 @@
     }
     positionDensityChart();
     densityChart.style.opacity = settings.densityOpacity / 100;
-    densityChart.style.display = enabled ? '' : 'none';
+    refreshDensityVisibility();
     if (densityVideo !== currentVideo || densityDuration !== duration ||
         densityOffset !== settings.offset || densityData !== danmakus) {
       densityPath.setAttribute('d', densityPathFor(danmakus, duration, settings.offset));
@@ -202,6 +204,10 @@
       densityOffset = settings.offset;
       densityData = danmakus;
     }
+  }
+
+  function refreshDensityVisibility() {
+    if (densityChart) densityChart.style.display = enabled && settings.showDensity ? '' : 'none';
   }
 
   function loadEmoticons() {
@@ -313,7 +319,8 @@
     input.checked = settings[key];
     input.addEventListener('change', () => {
       settings[key] = input.checked;
-      if (input.checked && layer) {
+      if (key === 'showDensity') refreshDensityVisibility();
+      else if (input.checked && layer) {
         layer.querySelectorAll('[data-danmaku-position]').forEach((el) => {
           if (isBlocked(el.dataset.danmakuPosition, el.dataset.danmakuColorful === 'true', el.dataset.danmakuText)) {
             el.remove();
@@ -1090,7 +1097,7 @@
       enabled = enableBox.checked;
       saveSettings();
       if (layer) layer.style.visibility = enabled ? 'visible' : 'hidden';
-      if (densityChart) densityChart.style.display = enabled ? '' : 'none';
+      refreshDensityVisibility();
       if (enabled && video) setPaused(video.paused);
       else setPaused(true);
     });
@@ -1114,6 +1121,7 @@
     addOffsetRow();
     addSettingRow('显示区域', 'displayArea', 25, 100, 25);
     addSettingRow('不透明度', 'opacity', 10, 100, 5);
+    addSettingToggle('显示密度图', 'showDensity');
     addSettingRow('密度图不透明度', 'densityOpacity', 0, 100, 5);
     addSettingRow('弹幕字号', 'fontScale', 50, 200, 10);
     addSettingRow('弹幕速度', 'speed', 50, 200, 10);

@@ -7,7 +7,9 @@ const vm = require('node:vm');
 const source = fs.readFileSync(path.join(__dirname, '..', 'local-danmaku.user.js'), 'utf8')
   .replace('  createUI();\n})();', `  globalThis.testApi = {
     densityPathFor, updateDensityChart, positionDensityChart, bindVideoEvents, applySettings, addSettingRow,
+    addSettingToggle, refreshDensityVisibility,
     settings, saveSettings,
+    setEnabled: (value) => { enabled = value; refreshDensityVisibility(); },
     setData: (data) => { danmakus = data; },
     setPanel: (panel) => { settingsPanel = panel; },
     getChart: () => densityChart
@@ -94,6 +96,8 @@ test('chart follows imports, offset, duration and replaced player without interc
   assert.equal(chart.style.left, '0px');
   assert.equal(chart.style.width, '400px');
   assert.equal(progress.style.overflow, 'visible');
+  assert.equal(progress.style.isolation, 'isolate');
+  assert.match(chart.style.cssText, /z-index:-1/);
   assert.equal(chart.style.opacity, 0.25);
   assert.equal(chart.attributes['aria-hidden'], 'true');
   const original = path.attributes.d;
@@ -155,7 +159,8 @@ test('chart tracks the actual progress bar under a scaled and inset wrapper', ()
 });
 
 test('density opacity restores, validates, updates immediately and persists', () => {
-  assert.equal(setup({ densityOpacity: 101 }).api.settings.densityOpacity, 50);
+  assert.equal(setup().api.settings.densityOpacity, 25);
+  assert.equal(setup({ densityOpacity: 101 }).api.settings.densityOpacity, 25);
   const { api, element, setVideo, storage } = setup({ densityOpacity: 0 });
   const progress = element('div');
   setVideo(makeVideo(progress, 100));
@@ -171,4 +176,36 @@ test('density opacity restores, validates, updates immediately and persists', ()
   slider.input();
   assert.equal(api.getChart().style.opacity, 0.75);
   assert.equal(JSON.parse(storage['local-danmaku-ui']).densityOpacity, 75);
+});
+
+test('density visibility restores, persists and respects local danmaku visibility', () => {
+  const { api, element, setVideo, storage } = setup({ showDensity: false });
+  const progress = element('div');
+  setVideo(makeVideo(progress, 100));
+  api.setData([{ t: 5 }]);
+  api.updateDensityChart();
+  const chart = api.getChart();
+  assert.equal(chart.style.display, 'none');
+
+  const panel = element('div');
+  api.setPanel(panel);
+  api.addSettingToggle('显示密度图', 'showDensity');
+  const input = panel.children[0].children[0];
+  assert.equal(input.checked, false);
+  input.checked = true;
+  input.change();
+  assert.equal(chart.style.display, '');
+  assert.equal(JSON.parse(storage['local-danmaku-ui']).showDensity, true);
+  api.setEnabled(false);
+  assert.equal(chart.style.display, 'none');
+  api.setEnabled(true);
+  assert.equal(chart.style.display, '');
+  input.checked = false;
+  input.change();
+  api.updateDensityChart();
+  api.setEnabled(false);
+  api.setEnabled(true);
+  assert.equal(chart.style.display, 'none');
+  assert.equal(JSON.parse(storage['local-danmaku-ui']).showDensity, false);
+  assert.equal(setup({ showDensity: 'false' }).api.settings.showDensity, true);
 });
